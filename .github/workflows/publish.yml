@@ -1,0 +1,40 @@
+name: publish
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
+      - name: Verify tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "tag=$GITHUB_REF_NAME package.json=$VERSION"
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "tag does not match package.json version" >&2
+            exit 1
+          fi
+      - run: npm install
+      - run: npm test
+      - name: Check whether this version is already on npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "SKIP_PUBLISH=1" >> "$GITHUB_ENV"
+            echo "$NAME@$VERSION is already published; skipping npm publish"
+          fi
+      - name: Publish to npm
+        if: env.SKIP_PUBLISH != '1'
+        run: npm publish --provenance --access public

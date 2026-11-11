@@ -1,0 +1,69 @@
+{
+  "name": "dsh-labscript",
+  "version": "0.2.1",
+  "description": "Control labscript-suite experiments from DeepSeek Harness: runmanager globals and scans, submits and waits, YAML fixed-operation protocols with postprocess write-back, panel snapshots, a built-in mock backend and a read-only doctor.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "python/bridge.py",
+    "python/tests/run_tests.py",
+    "examples/config.example.yml",
+    "examples/postprocess_demo.py",
+    "examples/protocols",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0 <0.3.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "labscript",
+    "runmanager",
+    "laboratory",
+    "automation"
+  ],
+  "license": "MIT",
+  "author": "ycAlphi (https://github.com/ycAlphi)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ycAlphi/dsh-labscript.git"
+  },
+  "homepage": "https://github.com/ycAlphi/dsh-labscript#readme",
+  "bugs": {
+    "url": "https://github.com/ycAlphi/dsh-labscript/issues"
+  },
+  "scripts": {
+    "test": "node --test test/bridge.test.mjs test/protocols.test.mjs test/tools.test.mjs test/runtime.test.mjs test/store.test.mjs test/client.test.mjs",
+    "test:python": "python python/tests/run_tests.py"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  }
+}

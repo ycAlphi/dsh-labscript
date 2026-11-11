@@ -1,0 +1,33 @@
+# Two ways to configure dsh-labscript in a DSH profile.
+#
+# 1) Hardware-free development / examples (built-in simulator):
+- id: dsh-labscript
+  name: dsh-labscript
+  config:
+    python: /path/to/python3
+    backend: mock-labscript
+    protocolsDir: /path/to/your/protocols
+    mock:
+      stateDir: ~/.dsh-labscript/mock
+    postprocess:
+      entry: postprocess_demo:analyze
+      pythonPaths: [/path/to/dsh-labscript/examples]
+
+# 2) Real labscript-suite (adjust host/port to your runmanager):
+# - id: dsh-labscript
+#   name: dsh-labscript
+#   config:
+#     python: /path/to/labscript-suite/python
+#     backend: labscript
+#     runmanager: { host: 127.0.0.1, port: 42523, timeoutS: 10 }
+#     protocolsDir: /path/to/your/protocols
+#     scriptsFile: /path/to/scripts.json
+#     hardLimitsFile: /path/to/hard_limits.json
+#     calibrationLog: /path/to/calibration.jsonl
+#     pathMap:
+#       - { remotePrefix: "E:/Experiments", localPrefix: "//lab-pc/Experiments" }
+#     reps: { global: dummy_iterator }
+#     postprocess:
+#       entry: my_lab.analysis:analyze
+#       pythonPaths: [/path/to/my_lab]
+#     approval: { engage: true, protocolRun: true }

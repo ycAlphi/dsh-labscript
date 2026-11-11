@@ -1,0 +1,6 @@
+# dsh-labscript -- DSH bundle patch
+#
+# Declares the plugin row. The "name" must match the installed package name.
+- insert:
+    - id: dsh-labscript
+      name: dsh-labscript

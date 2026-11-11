@@ -1,0 +1,18 @@
+# Demo fixed-operation protocol. It runs against the built-in mock-labscript
+# backend without hardware; replace labscript with your sequence path and the
+# panel keys with your own globals for real experiments.
+name: demo_scan
+labscript: /path/to/your/sequence.py
+set:
+  do_acquire: true
+  amplitude: 0.5
+scan:
+  duration_test_us: np.linspace(0.0, 8.0, 5)
+reps: 2
+postprocess: demo.peaks
+finish:
+  restore: true
+  panel:
+    duration_test_us: fit.center
+  history:
+    demo.peaks.center_us: fit.center

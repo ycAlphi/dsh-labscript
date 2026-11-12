@@ -64,6 +64,17 @@ test('labs_status and labs_set execute through the bridge', async () => {
   assert.equal(written.snapshot.name, 'snap-1.json')
 })
 
+test('labs_status renders panel values on demand', async () => {
+  const plugin = makePlugin()
+  const status = await plugin.tools.get('labs_status').execute({}, exec)
+  const countOnly = plugin.tools.get('labs_status').output.render({}, status)[0].text
+  assert.match(countOnly, /globals: 1 keys \(pass keys=\[\.\.\.\] to read values\)/)
+  const values = plugin.tools.get('labs_status').output.render({ keys: ['amplitude'] }, status)[0].text
+  assert.match(values, /  amplitude = 0\.5/)
+  const missing = plugin.tools.get('labs_status').output.render({ keys: ['nope'] }, status)[0].text
+  assert.match(missing, /  nope = <missing>/)
+})
+
 test('labs_engage submits and sets pending, labs_wait clears it', async () => {
   const plugin = makePlugin()
   const engaged = await plugin.tools.get('labs_engage').execute({ note: 'test run' }, exec)

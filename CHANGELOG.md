@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3
+
+- Fix: labs_status now prints panel values. keys=[...] and raw=true were accepted but the
+  rendered summary never showed any global, so the model could only see the key count
+  (the tool result content is the render output; the returned object is not in context).
+  With keys the selected values are printed (240 chars each, <missing> when absent);
+  without keys it prints the count and a hint to pass keys.
+- Tests: labs_status value rendering (values, count-only, missing keys).
+
 ## 0.2.2
 
 - Fix: labs_status and labs_engage report pathMap-mapped paths. `labs_status.labscript`

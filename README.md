@@ -125,7 +125,7 @@ is not a physics simulation.
 ## Development
 
     npm install              # only runtime dependency: yaml
-    npm test                 # node --test, 35 tests (fake bridge, no python needed)
+    npm test                 # node --test, 36 tests (fake bridge, no python needed)
     python python/tests/run_tests.py   # 15 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 

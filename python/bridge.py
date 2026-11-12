@@ -927,8 +927,8 @@ def cmd_status(config, args):
     out = {
         "backend": config.get("backend"),
         "version": backend.version() if hasattr(backend, "version") else None,
-        "labscript": backend.labscript_file(),
-        "shot_output_folder": backend.shot_output_folder(),
+        "labscript": map_path(config, backend.labscript_file()),
+        "shot_output_folder": map_path(config, backend.shot_output_folder()),
         "globals": jsonable(values),
         "n_shots": backend.n_shots(),
         "error_in_globals": backend.error_in_globals(),
@@ -1015,7 +1015,7 @@ def cmd_engage(config, args):
         "mapped_run_folder": map_path(config, run_folder),
         "n_shots_at_submit": n_shots,
         "expected_n_shots": int(args.get("expected_n_shots") or n_shots),
-        "labscript": backend.labscript_file(),
+        "labscript": map_path(config, backend.labscript_file()),
         "submitted_at": now_iso(),
     }
     append_event(config, {"ts": out["submitted_at"], "tool": "engage", "backend": config.get("backend"), "note": args.get("note"), "run_folder": run_folder, "expected_n_shots": out["expected_n_shots"]})
@@ -1127,7 +1127,7 @@ def cmd_progress(config, args):
     expected = int(args.get("expected_n_shots") or 0)
     folder = map_path(config, run_folder)
     shots = sorted(glob.glob(os.path.join(folder, "**", "*.h5"), recursive=True)) if folder else []
-    return {"run_folder": run_folder, "n_h5": len(shots), "expected_n_shots": expected, "complete": bool(expected and len(shots) >= expected)}
+    return {"run_folder": run_folder, "mapped_run_folder": folder, "n_h5": len(shots), "expected_n_shots": expected, "complete": bool(expected and len(shots) >= expected)}
 
 
 

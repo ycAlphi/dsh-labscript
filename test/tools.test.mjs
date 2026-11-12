@@ -93,6 +93,23 @@ test('labs_protocol list/show/run and wait finalizes', async () => {
   assert.equal(waited.finalize.restore.restored, true)
 })
 
+test('rendered output uses pathMap-mapped paths', async () => {
+  const plugin = makePlugin()
+  const render = (name, args, value) => plugin.tools.get(name).output.render(args, value)[0].text
+  const engaged = await plugin.tools.get('labs_engage').execute({ note: 'test' }, exec)
+  const engageText = render('labs_engage', {}, engaged)
+  assert.match(engageText, /mnt\/lab\/runs\/run_000001/)
+  assert.doesNotMatch(engageText, /\/tmp\/runs\/run_000001/)
+  const status = await plugin.tools.get('labs_status').execute({}, exec)
+  const statusText = render('labs_status', {}, status)
+  assert.match(statusText, /mnt\/lab\/runs\/run_000001/)
+  assert.match(statusText, /shot output: \/tmp\/runs/)
+  const waited = await plugin.tools.get('labs_wait').execute({}, exec)
+  assert.match(render('labs_wait', {}, waited), /mnt\/lab\/runs\/run_000001/)
+  const data = await plugin.tools.get('labs_data').execute({ run_folder: '/tmp/runs/run_000001' }, exec)
+  assert.match(render('labs_data', {}, data), /mnt\/lab\/runs\/run_000001/)
+})
+
 test('labs_abort clears pending state', async () => {
   const plugin = makePlugin()
   await plugin.tools.get('labs_engage').execute({}, exec)

@@ -97,6 +97,12 @@ Add one row to your DSH profile patch (see examples/config.example.yml):
           pythonPaths: [/path/to/my_lab]
         approval: { engage: true, protocolRun: true }
 
+`pathMap` rewrites paths reported by runmanager (remote drive letters such as
+`E:/Experiments`) into paths this machine can open (UNC shares). Tool output is
+already mapped: `labs_status`, `labs_engage`, `labs_wait`, `labs_data` and
+`labs_protocol` show local paths, while `run_folder` keeps the raw runmanager
+value next to `mapped_run_folder`.
+
 The python interpreter must be able to import numpy and h5py; the real backend
 also needs runmanager (labscript-suite). The plugin never stores credentials:
 zprocess authentication is read by labscript itself from labconfig.
@@ -119,8 +125,8 @@ is not a physics simulation.
 ## Development
 
     npm install              # only runtime dependency: yaml
-    npm test                 # node --test, 18 tests (fake bridge, no python needed)
-    python python/tests/run_tests.py   # 8 tests (needs numpy + h5py)
+    npm test                 # node --test, 35 tests (fake bridge, no python needed)
+    python python/tests/run_tests.py   # 15 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 
 A fresh clone must run `npm install` before `npm test`; the CI workflow does this.

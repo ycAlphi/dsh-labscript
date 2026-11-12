@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2
+
+- Fix: labs_status and labs_engage report pathMap-mapped paths. `labs_status.labscript`
+  and `labs_status.shot_output_folder` used to be raw runmanager paths (e.g. E:\...)
+  and were unusable from the agent's machine; they are now what pathMap maps them to.
+  This is a field-semantics fix: read them as local paths, do not map again.
+- Fix: tool output renders mapped run folders. The rendered lines of labs_engage,
+  labs_wait, labs_data, labs_protocol and the pending-run progress now prefer
+  `mapped_run_folder` over the raw `run_folder`.
+- Fix: labs_status now lists the shot output folder, and the status progress object
+  reports `mapped_run_folder`.
+- Tests: pathMap exit coverage (status mapping, idempotency, progress mapping).
+
 ## 0.2.1
 
 - Hard limits support a lower bound: limits entries can now use min as well as max

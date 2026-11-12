@@ -291,6 +291,61 @@ def test_doctor_mock():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_status_maps_paths_from_runmanager():
+    """labs_status must return paths the agent's machine can open."""
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-py-map-")
+    try:
+        cfg = make_config(tmp)
+        cfg["pathMap"] = [{"remotePrefix": "E:\\Experiments", "localPrefix": "\\\\lab-pc\\Experiments"}]
+
+        class FakeBackend(object):
+            def get_globals(self, raw=False):
+                return {}
+
+            def labscript_file(self):
+                return "E:\\Experiments\\2026\\x.py"
+
+            def shot_output_folder(self):
+                return "E:\\Experiments\\2026\\11\\12\\0177"
+
+            def n_shots(self):
+                return 1
+
+            def error_in_globals(self):
+                return False
+
+            def run_shots(self):
+                return True
+
+            def version(self):
+                return "fake"
+
+        original = bridge.make_backend
+        bridge.make_backend = lambda config: FakeBackend()
+        try:
+            out = bridge.cmd_status(cfg, {})
+        finally:
+            bridge.make_backend = original
+        assert out["labscript"] == "\\\\lab-pc\\Experiments\\2026\\x.py", out["labscript"]
+        assert out["shot_output_folder"] == "\\\\lab-pc\\Experiments\\2026\\11\\12\\0177", out["shot_output_folder"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_map_path_is_idempotent():
+    cfg = {"pathMap": [{"remotePrefix": "E:\\Experiments", "localPrefix": "\\\\lab-pc\\Experiments"}]}
+    once = bridge.map_path(cfg, "E:\\Experiments\\a\\b.h5")
+    assert once == "\\\\lab-pc\\Experiments\\a\\b.h5", once
+    assert bridge.map_path(cfg, once) == once
+
+
+def test_progress_reports_mapped_run_folder():
+    cfg = {"pathMap": [{"remotePrefix": "E:\\Experiments", "localPrefix": "\\\\lab-pc\\Experiments"}]}
+    out = bridge.cmd_progress(cfg, {"run_folder": "E:\\Experiments\\nope", "expected_n_shots": 1})
+    assert out["run_folder"] == "E:\\Experiments\\nope", out
+    assert out["mapped_run_folder"] == "\\\\lab-pc\\Experiments\\nope", out
+
+
 def main():
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     failures = 0

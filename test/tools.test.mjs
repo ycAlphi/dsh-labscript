@@ -68,11 +68,40 @@ test('labs_status renders panel values on demand', async () => {
   const plugin = makePlugin()
   const status = await plugin.tools.get('labs_status').execute({}, exec)
   const countOnly = plugin.tools.get('labs_status').output.render({}, status)[0].text
-  assert.match(countOnly, /globals: 1 keys \(pass keys=\[\.\.\.\] to read values\)/)
+  assert.match(countOnly, /globals: 1 keys \(pass keys=\[\.\.\.\] or keys=\["\*"\] to read values\)/)
   const values = plugin.tools.get('labs_status').output.render({ keys: ['amplitude'] }, status)[0].text
   assert.match(values, /  amplitude = 0\.5/)
   const missing = plugin.tools.get('labs_status').output.render({ keys: ['nope'] }, status)[0].text
   assert.match(missing, /  nope = <missing>/)
+  const all = plugin.tools.get('labs_status').output.render({ keys: ['*'] }, status)[0].text
+  assert.match(all, /globals: all 1/)
+  assert.match(all, /  amplitude = 0\.5/)
+})
+
+test('labs_status shows scan axes and a panel n_shots mismatch', () => {
+  const plugin = makePlugin()
+  const value = {
+    backend: 'mock-labscript',
+    labscript: 'mock_sequence.py',
+    shot_output_folder: '/tmp/runs',
+    globals: {},
+    scan_axes: { a: 19 },
+    n_shots_from_arrays: 19,
+    n_shots: 380,
+    error_in_globals: false,
+    run_shots: true,
+    panel_history: { dir: '/tmp/history', latest: null, count: 0 },
+  }
+  const text = plugin.tools.get('labs_status').output.render({}, value)[0].text
+  assert.match(text, /scan axes: a=19  n_shots_from_arrays=19  \(panel n_shots=380 differs\)/)
+})
+
+test('labs_wait fails fast for a run folder that does not exist', async () => {
+  const plugin = makePlugin()
+  await assert.rejects(
+    () => plugin.tools.get('labs_wait').execute({ run_folder: '/tmp/runs/missing' }, exec),
+    (error) => error instanceof LabError && error.code === 'RUN_FOLDER_MISSING' && /does not exist/.test(error.message),
+  )
 })
 
 test('labs_engage submits and sets pending, labs_wait clears it', async () => {

@@ -344,6 +344,7 @@ def test_progress_reports_mapped_run_folder():
     out = bridge.cmd_progress(cfg, {"run_folder": "E:\\Experiments\\nope", "expected_n_shots": 1})
     assert out["run_folder"] == "E:\\Experiments\\nope", out
     assert out["mapped_run_folder"] == "\\\\lab-pc\\Experiments\\nope", out
+    assert out["folder_exists"] is False, out
 
 
 def test_data_missing_run_folder():
@@ -384,6 +385,22 @@ def test_status_drops_missing_keys():
         assert "amplitude" in out["globals"], out["globals"]
         assert "Select_Sequence" not in out["globals"], out["globals"]
         assert "Select_Sequence" not in out["raw_globals"], out["raw_globals"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_status_scan_axes():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-scan-axes-")
+    try:
+        cfg = make_config(tmp)
+        bridge.cmd_set(cfg, {"values": {"duration_test_us": [0.0, 0.5, 1.0]}})
+        out = bridge.cmd_status(cfg, {})
+        assert out["scan_axes"].get("duration_test_us") == 3, out["scan_axes"]
+        assert out["n_shots_from_arrays"] == 3, out["n_shots_from_arrays"]
+        assert out["n_shots"] == 3, out["n_shots"]
+        partial = bridge.cmd_status(cfg, {"keys": ["amplitude"]})
+        assert "duration_test_us" not in partial["globals"], partial["globals"]
+        assert partial["scan_axes"].get("duration_test_us") == 3, partial["scan_axes"]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

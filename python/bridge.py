@@ -919,10 +919,24 @@ def cmd_status(config, args):
     backend = make_backend(config)
     keys = args.get("keys")
     raw = bool(args.get("raw"))
-    values = backend.get_globals(raw=False)
+    panel_values = backend.get_globals(raw=False)
     raw_values = backend.get_globals(raw=True)
+    scan_axes = {}
+    n_shots_from_arrays = 1
+    for name, value in panel_values.items():
+        if isinstance(value, str) or not hasattr(value, "__len__"):
+            continue
+        try:
+            size = int(len(value))
+        except Exception:
+            continue
+        if size <= 1:
+            continue
+        scan_axes[str(name)] = size
+        n_shots_from_arrays *= size
+    values = dict(panel_values)
     if keys:
-        values = dict((k, values[k]) for k in keys if k in values)
+        values = dict((k, panel_values[k]) for k in keys if k in panel_values)
         raw_values = dict((k, raw_values[k]) for k in keys if k in raw_values)
     out = {
         "backend": config.get("backend"),
@@ -930,6 +944,8 @@ def cmd_status(config, args):
         "labscript": map_path(config, backend.labscript_file()),
         "shot_output_folder": map_path(config, backend.shot_output_folder()),
         "globals": jsonable(values),
+        "scan_axes": scan_axes,
+        "n_shots_from_arrays": n_shots_from_arrays,
         "n_shots": backend.n_shots(),
         "error_in_globals": backend.error_in_globals(),
         "run_shots": backend.run_shots(),
@@ -1127,7 +1143,7 @@ def cmd_progress(config, args):
     expected = int(args.get("expected_n_shots") or 0)
     folder = map_path(config, run_folder)
     shots = sorted(glob.glob(os.path.join(folder, "**", "*.h5"), recursive=True)) if folder else []
-    return {"run_folder": run_folder, "mapped_run_folder": folder, "n_h5": len(shots), "expected_n_shots": expected, "complete": bool(expected and len(shots) >= expected)}
+    return {"run_folder": run_folder, "mapped_run_folder": folder, "folder_exists": bool(folder) and os.path.isdir(folder), "n_h5": len(shots), "expected_n_shots": expected, "complete": bool(expected and len(shots) >= expected)}
 
 
 

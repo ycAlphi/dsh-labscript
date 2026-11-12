@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.5
+
+- labs_status can list every panel global: keys=["*"] prints all of them, sorted
+  (raw=true prints the raw expressions). This makes leftover array globals visible,
+  which is what makes labs_protocol refuse to run with N_SHOTS_MISMATCH.
+- labs_status reports scan axes: the array-valued globals with their lengths and
+  n_shots_from_arrays (their product), and flags when the panel n_shots differs from
+  that product.
+- labs_wait fails immediately when an explicit run folder does not exist and is not
+  this session's pending run (it used to wait for the full timeout), and the result
+  shows whether the folder exists.
+- labs_data description: run_folder defaults to the pending run, else the last run
+  submitted through this plugin (persisted across restarts).
+- cmd_progress returns folder_exists.
+- Tests: scan axes, all-globals rendering, wait fast-fail, progress folder_exists.
+
 ## 0.2.4
 
 - Fix: labs_data no longer answers h5: 0 for a run folder that does not exist. A missing

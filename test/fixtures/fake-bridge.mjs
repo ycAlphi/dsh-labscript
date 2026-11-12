@@ -48,7 +48,7 @@ function answer(cmd, args) {
     return { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), expected_n_shots: args.expected_n_shots || 2, n_h5: 2, complete: true, timed_out: false, elapsed: 1.2 }
   }
   if (cmd === 'progress') {
-    return { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), n_h5: 1, expected_n_shots: args.expected_n_shots || 2, complete: false }
+    return { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), folder_exists: Boolean(MAPPED_RUNS[args.run_folder]), n_h5: 1, expected_n_shots: args.expected_n_shots || 2, complete: false }
   }
   if (cmd === 'abort') return { aborted: true, result: { ok: true } }
   if (cmd === 'data') return { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), n_h5: 2, globals: { amplitude: 0.5 }, scan_table: { scan: args.scan || 'duration_test_us', n_points: 2, rows: [] } }

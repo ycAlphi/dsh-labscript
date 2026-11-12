@@ -922,8 +922,8 @@ def cmd_status(config, args):
     values = backend.get_globals(raw=False)
     raw_values = backend.get_globals(raw=True)
     if keys:
-        values = dict((k, values.get(k)) for k in keys)
-        raw_values = dict((k, raw_values.get(k)) for k in keys)
+        values = dict((k, values[k]) for k in keys if k in values)
+        raw_values = dict((k, raw_values[k]) for k in keys if k in raw_values)
     out = {
         "backend": config.get("backend"),
         "version": backend.version() if hasattr(backend, "version") else None,
@@ -1182,9 +1182,16 @@ def cmd_data(config, args):
     if not run_folder:
         raise BridgeError("BAD_ARGS", "run_folder is required")
     folder = map_path(config, run_folder)
+    if not os.path.isdir(folder):
+        raise BridgeError("RUN_FOLDER_MISSING", "run folder does not exist: " + str(folder), {
+            "run_folder": run_folder,
+            "mapped_run_folder": folder,
+            "hint": "runmanager's shot output folder is the folder the NEXT run will use; it does not exist until engage. Pass a historical run folder explicitly.",
+        })
     shots = sorted(glob.glob(os.path.join(folder, "**", "*.h5"), recursive=True))
     out = {"run_folder": run_folder, "mapped_run_folder": folder, "n_h5": len(shots)}
     if not shots:
+        out["empty"] = True
         return out
     scan = args.get("scan")
     with h5py.File(shots[0], "r", locking=False) as handle:

@@ -126,7 +126,7 @@ is not a physics simulation.
 
     npm install              # only runtime dependency: yaml
     npm test                 # node --test, 36 tests (fake bridge, no python needed)
-    python python/tests/run_tests.py   # 15 tests (needs numpy + h5py)
+    python python/tests/run_tests.py   # 18 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 
 A fresh clone must run `npm install` before `npm test`; the CI workflow does this.
@@ -157,7 +157,9 @@ A fresh clone must run `npm install` before `npm test`; the CI workflow does thi
   partial). compiled_not_executed means shots exist but show no acquisition data yet;
   BLACS may be paused or not executing the queue.
 - Real runmanager engage does not return a run folder; the bridge captures the
-  output folder before engage and reports it as the run folder.
+  output folder before engage and reports it as the run folder. That shot output
+  folder is the NEXT run's folder and does not exist until engage, so labs_data
+  errors (RUN_FOLDER_MISSING) instead of reporting h5: 0 for a path that is not there.
 - The panel is snapshotted before every write; labs_restore restores only the keys the
   write touched (full=true restores the whole panel), so unrelated concurrent edits survive.
 - Actions are logged to events.jsonl next to the snapshots.

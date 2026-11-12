@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.4
+
+- Fix: labs_data no longer answers h5: 0 for a run folder that does not exist. A missing
+  folder raises RUN_FOLDER_MISSING with the raw and mapped paths plus a hint: runmanager's
+  shot output folder is the folder the NEXT run will use and only exists after engage, so
+  historical runs must be passed explicitly. An existing folder with no shots reports
+  empty: true instead.
+- Fix: labs_status with keys=[...] drops keys that are not panel globals instead of
+  returning null, so the rendered output shows <missing>. UI group names (for example
+  Select_Sequence) are not globals: read their leaf keys or a run's h5.
+- Descriptions: labs_status says the shot output folder is the NEXT run folder and that
+  keys are leaf global names; labs_data explains the run_folder default and the error.
+- Tests: missing run folder, empty run folder, missing keys dropped.
+
 ## 0.2.3
 
 - Fix: labs_status now prints panel values. keys=[...] and raw=true were accepted but the

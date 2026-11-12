@@ -346,6 +346,48 @@ def test_progress_reports_mapped_run_folder():
     assert out["mapped_run_folder"] == "\\\\lab-pc\\Experiments\\nope", out
 
 
+def test_data_missing_run_folder():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-data-missing-")
+    try:
+        cfg = make_config(tmp)
+        missing = os.path.join(tmp, "no_such_run")
+        try:
+            bridge.cmd_data(cfg, {"run_folder": missing})
+        except bridge.BridgeError as exc:
+            assert exc.code == "RUN_FOLDER_MISSING", exc.message
+            assert exc.detail["mapped_run_folder"] == missing, exc.detail
+            assert "next" in exc.detail["hint"].lower(), exc.detail
+        else:
+            raise AssertionError("expected RUN_FOLDER_MISSING")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_data_empty_run_folder():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-data-empty-")
+    try:
+        cfg = make_config(tmp)
+        run_dir = os.path.join(tmp, "empty_run")
+        os.makedirs(run_dir, exist_ok=True)
+        out = bridge.cmd_data(cfg, {"run_folder": run_dir})
+        assert out["n_h5"] == 0, out
+        assert out.get("empty") is True, out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_status_drops_missing_keys():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-status-missing-")
+    try:
+        cfg = make_config(tmp)
+        out = bridge.cmd_status(cfg, {"keys": ["amplitude", "Select_Sequence"], "raw": True})
+        assert "amplitude" in out["globals"], out["globals"]
+        assert "Select_Sequence" not in out["globals"], out["globals"]
+        assert "Select_Sequence" not in out["raw_globals"], out["raw_globals"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     failures = 0

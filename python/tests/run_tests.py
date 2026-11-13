@@ -232,7 +232,7 @@ def test_data_reading():
         cfg = make_config(tmp)
         started = bridge.cmd_protocol_start(cfg, {"protocol": protocol_raw()})
         run_folder = started["engage"]["run_folder"]
-        data = bridge.cmd_data(cfg, {"run_folder": run_folder, "scan": "duration_test_us"})
+        data = bridge.cmd_data(cfg, {"run_folder": run_folder, "scan": "duration_test_us", "limit": 1})
         assert data["n_h5"] == 6
         assert data["scan_table"]["n_points"] == 6
         assert data["globals"]["amplitude"] == 0.5
@@ -401,6 +401,33 @@ def test_status_scan_axes():
         partial = bridge.cmd_status(cfg, {"keys": ["amplitude"]})
         assert "duration_test_us" not in partial["globals"], partial["globals"]
         assert partial["scan_axes"].get("duration_test_us") == 3, partial["scan_axes"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_data_keys_and_scan_summary():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-data-keys-")
+    try:
+        cfg = make_config(tmp)
+        started = bridge.cmd_protocol_start(cfg, {"protocol": protocol_raw()})
+        run_folder = started["engage"]["run_folder"]
+        one = bridge.cmd_data(cfg, {"run_folder": run_folder, "keys": ["amplitude"]})
+        assert list(one["globals"].keys()) == ["amplitude"], one["globals"]
+        absent = bridge.cmd_data(cfg, {"run_folder": run_folder, "keys": ["nope"]})
+        assert absent["globals"] == {}, absent["globals"]
+        full = bridge.cmd_data(cfg, {"run_folder": run_folder, "keys": ["*"]})
+        assert len(full["globals"]) > 1, full["globals"]
+        summary = bridge.cmd_data(cfg, {"run_folder": run_folder, "scan": "duration_test_us"})
+        table = summary["scan_table"]
+        assert table["n_points"] == 6, table
+        assert table["axis"]["points"] == 3, table["axis"]
+        assert table["axis"]["min"] == 0.0 and table["axis"]["max"] == 2.0, table["axis"]
+        assert table["axis"]["step"] == 1.0, table["axis"]
+        assert "shot" not in table["columns"] and "duration_test_us" not in table["columns"], table["columns"]
+        assert "rows" not in table, list(table.keys())
+        limited = bridge.cmd_data(cfg, {"run_folder": run_folder, "scan": "duration_test_us", "limit": 2})
+        assert len(limited["scan_table"]["rows"]) == 2, limited["scan_table"]
+        assert limited["scan_table"]["rows"][0]["shot"], limited["scan_table"]["rows"][0]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

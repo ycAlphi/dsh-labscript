@@ -96,6 +96,19 @@ test('labs_status shows scan axes and a panel n_shots mismatch', () => {
   assert.match(text, /scan axes: a=19  n_shots_from_arrays=19  \(panel n_shots=380 differs\)/)
 })
 
+test('labs_data renders selected globals, results and the scan summary', async () => {
+  const plugin = makePlugin()
+  const args = { run_folder: '/tmp/runs/run_000001', scan: 'duration_test_us', keys: ['amplitude', 'nope'], results: true, limit: 1 }
+  const data = await plugin.tools.get('labs_data').execute(args, exec)
+  const text = plugin.tools.get('labs_data').output.render(args, data)[0].text
+  assert.match(text, /results: fit \(1 fields\), lyse \(2 fields\)/)
+  assert.match(text, /  amplitude = 0\.5/)
+  assert.match(text, /  nope = <missing>/)
+  assert.match(text, /scan duration_test_us: 2 shots, 2 unique 0\.\.1 step 1, 2 numeric columns \(1 raw rows below\)/)
+  assert.match(text, /rows \(first 1\):/)
+  assert.match(text, /shot=shot_0000\.h5/)
+})
+
 test('labs_wait fails fast for a run folder that does not exist', async () => {
   const plugin = makePlugin()
   await assert.rejects(

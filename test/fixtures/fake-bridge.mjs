@@ -51,7 +51,28 @@ function answer(cmd, args) {
     return { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), folder_exists: Boolean(MAPPED_RUNS[args.run_folder]), n_h5: 1, expected_n_shots: args.expected_n_shots || 2, complete: false }
   }
   if (cmd === 'abort') return { aborted: true, result: { ok: true } }
-  if (cmd === 'data') return { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), n_h5: 2, globals: { amplitude: 0.5 }, scan_table: { scan: args.scan || 'duration_test_us', n_points: 2, rows: [] } }
+  if (cmd === 'data') {
+    const allGlobals = { amplitude: 0.5, do_acquire: true }
+    const keys = Array.isArray(args.keys) ? args.keys.map(String) : null
+    let globals = allGlobals
+    if (keys && !(keys.length === 1 && keys[0] === '*')) {
+      globals = {}
+      for (const key of keys) if (key in allGlobals) globals[key] = allGlobals[key]
+    }
+    const res = { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), n_h5: 2, globals }
+    if (args.results) res.results_layout = { lyse: ['a', 'b'], fit: ['c'] }
+    if (args.scan) {
+      const table = { scan: args.scan, n_points: 2, axis: { points: 2, min: 0, max: 1, step: 1 }, columns: ['fit.c', 'lyse.a'] }
+      if (args.limit) {
+        table.rows = [
+          { shot: 'shot_0000.h5', [args.scan]: 0, 'fit.c': 2.5, 'lyse.a': 1.5 },
+          { shot: 'shot_0001.h5', [args.scan]: 1, 'fit.c': 2.6, 'lyse.a': 1.6 },
+        ].slice(0, args.limit)
+      }
+      res.scan_table = table
+    }
+    return res
+  }
   if (cmd === 'restore') return { restored_from: { file: '/tmp/history/snap-1.json', ts: 't' }, written: {}, readback: {} }
   if (cmd === 'doctor') return { checks: [{ name: 'numpy', status: 'ok', detail: '2.2.5' }, { name: 'h5py', status: 'ok', detail: '3.13.0' }], backend: 'mock-labscript', python: '3.11.0' }
   if (cmd === 'protocol_plan') return { plan: { name: 'demo_scan', expected_n_shots: 2, reps: 1, scan: { duration_test_us: { expr: 'np.linspace(0, 1, 2)', n: 2 } } }, hard_limits: { checked: false, warning: 'hardLimitsFile not configured' }, name_check: { checked: true, script: 'mock_sequence.py', missing: ['old_duration_key'], suggestions: { old_duration_key: ['duration_test_us'] } }, warnings: [] }

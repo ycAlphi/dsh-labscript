@@ -1213,7 +1213,12 @@ def cmd_data(config, args):
     with h5py.File(shots[0], "r", locking=False) as handle:
         globals_attrs = dict(handle["globals"].attrs) if "globals" in handle else {}
         if args.get("globals", True):
-            out["globals"] = jsonable(globals_attrs)
+            selected = jsonable(globals_attrs)
+            keys = args.get("keys")
+            if keys and list(map(str, keys)) != ["*"]:
+                wanted = [str(key) for key in keys]
+                selected = dict((key, selected[key]) for key in wanted if key in selected)
+            out["globals"] = selected
         if args.get("results"):
             layout = {}
             if "results" in handle:
@@ -1252,7 +1257,30 @@ def cmd_data(config, args):
                                 if number is not None:
                                     row[group_name + "." + key] = number
                 rows.append(row)
-        out["scan_table"] = {"scan": scan, "n_points": len(rows), "rows": rows}
+        axis_values = [float(row[scan]) for row in rows if isinstance(row.get(scan), (int, float))]
+        unique = sorted(set(axis_values))
+        steps = [round(b - a, 9) for a, b in zip(unique, unique[1:])]
+        columns = sorted(set(key for row in rows for key in row) - {"shot", scan})
+        table = {
+            "scan": scan,
+            "n_points": len(rows),
+            "axis": {
+                "points": len(unique),
+                "min": unique[0] if unique else None,
+                "max": unique[-1] if unique else None,
+                "step": (sorted(steps)[len(steps) // 2] if steps else None),
+            },
+            "columns": columns,
+        }
+        limit = args.get("limit")
+        if limit:
+            try:
+                limit = max(1, min(20, int(limit)))
+            except Exception:
+                limit = 0
+            if limit:
+                table["rows"] = rows[:limit]
+        out["scan_table"] = table
     return out
 
 

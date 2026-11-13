@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.6
+
+- Fix: labs_data rendered only counts. It now prints selected first-shot globals
+  (keys=[...] to choose, ["*"] for all, <missing> for absent keys), the results group
+  names when results: true, and a scan axis summary (unique points, min/max, median
+  step, numeric column count). Pass limit to print up to 20 raw scan rows; the bridge
+  only returns rows when limit is given.
+- Tests: first-shot key selection, scan axis summary and columns, on-demand rows, and
+  the rendered output for keys/results/scan/limit.
+
 ## 0.2.5
 
 - labs_status can list every panel global: keys=["*"] prints all of them, sorted

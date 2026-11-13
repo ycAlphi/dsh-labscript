@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.7
+
+- Fix: labs_wait no longer fails with "value is not lossless JSON". Tool results must be
+  pure JSON; a completed wait could carry an undefined hint field, which the DSH host
+  rejects when recording the result (the run itself was fine). labs_status pending
+  progress and the aborted-wait result are cleaned the same way.
+- Fix: non-ASCII arguments (e.g. a Chinese note) no longer break the bridge. Python's
+  stdin on Windows uses the locale encoding (GBK); the bridge now reads stdin as UTF-8.
+  Such a note used to submit the run and then fail with UnicodeEncodeError in the event
+  log, which made a successful engage look failed.
+- Fix: a failed event-log write can no longer turn a successful action into an error; it
+  is reported on stderr and the action result is returned as usual.
+- Tests: Unicode note end-to-end through the bridge process, event-log failure
+  isolation, and a lossless-JSON check on tool results.
+
 ## 0.2.6
 
 - Fix: labs_data rendered only counts. It now prints selected first-shot globals

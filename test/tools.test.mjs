@@ -46,6 +46,13 @@ function makePlugin(configOverrides, approvalOutcome) {
 
 const exec = { agent: {}, callId: 'call-1', signal: undefined }
 
+function assertLossless(value, path) {
+  const label = path || 'value'
+  if (value === undefined) assert.fail(label + ' is undefined')
+  if (value === null || typeof value !== 'object') return
+  for (const key of Object.keys(value)) assertLossless(value[key], label + '.' + key)
+}
+
 test('registers nine tools and one skill', () => {
   const plugin = makePlugin()
   assert.deepEqual([...plugin.tools.keys()].sort(), ['labs_abort', 'labs_data', 'labs_doctor', 'labs_engage', 'labs_protocol', 'labs_restore', 'labs_set', 'labs_status', 'labs_wait'])
@@ -94,6 +101,14 @@ test('labs_status shows scan axes and a panel n_shots mismatch', () => {
   }
   const text = plugin.tools.get('labs_status').output.render({}, value)[0].text
   assert.match(text, /scan axes: a=19  n_shots_from_arrays=19  \(panel n_shots=380 differs\)/)
+})
+
+test('tool results contain no undefined fields (lossless JSON)', async () => {
+  const plugin = makePlugin()
+  assertLossless(await plugin.tools.get('labs_engage').execute({}, exec))
+  assertLossless(await plugin.tools.get('labs_status').execute({}, exec))
+  assertLossless(await plugin.tools.get('labs_wait').execute({}, exec))
+  assertLossless(await plugin.tools.get('labs_status').execute({}, exec))
 })
 
 test('labs_data renders selected globals, results and the scan summary', async () => {

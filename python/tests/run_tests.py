@@ -432,6 +432,41 @@ def test_data_keys_and_scan_summary():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_engage_with_unicode_note():
+    import subprocess
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-unicode-")
+    try:
+        cfg = make_config(tmp)
+        request = {"cmd": "engage", "config": cfg, "args": {"note": "中文备注：测试"}}
+        env = dict((k, v) for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING"))
+        proc = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(HERE), "bridge.py")],
+            input=json.dumps(request).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        payload = json.loads(proc.stdout.decode("utf-8"))
+        assert payload.get("ok") is True, payload
+        assert payload["data"]["run_folder"], payload["data"]
+        with open(os.path.join(tmp, "history", "events.jsonl"), "r", encoding="utf-8") as handle:
+            assert "中文备注" in handle.read()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_append_event_never_raises():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-events-")
+    try:
+        blocked = os.path.join(tmp, "blocked")
+        with open(blocked, "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+        cfg = {"panelHistoryDir": os.path.join(blocked, "history")}
+        bridge.append_event(cfg, {"tool": "x", "note": "中文"})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
     failures = 0

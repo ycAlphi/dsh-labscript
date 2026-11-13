@@ -612,10 +612,13 @@ def snapshot_panel(backend, config, tool, args, touched=None):
 
 
 def append_event(config, event):
-    folder = history_dir(config)
-    path = os.path.join(folder, "events.jsonl")
-    with open(path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(jsonable(event), ensure_ascii=False) + "\n")
+    try:
+        folder = history_dir(config)
+        path = os.path.join(folder, "events.jsonl")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(jsonable(event), ensure_ascii=False) + "\n")
+    except Exception as exc:
+        sys.stderr.write("append_event failed: %s\n" % (exc,))
 
 
 def load_snapshot(config, name):
@@ -1530,6 +1533,10 @@ HANDLERS = {
 
 
 def main():
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     try:
         request = json.load(sys.stdin)
     except Exception as exc:

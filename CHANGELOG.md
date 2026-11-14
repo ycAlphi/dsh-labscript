@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.8
+
+Fixes from a real labscript-suite session (2026-11-14, 145 tool calls, no run submitted by the
+plugin). Each defect was reproduced against the stock runmanager source before the fix.
+
+- Fix: labs_set failed with "TypeError: 'NoneType' object is not iterable" after the write had
+  already landed. runmanager's set_globals RPC is a side-effect call whose handler returns None,
+  and the bridge fed that reply to dict(). It now reports the requested values and lets the
+  readback decide success. When a write really fails, the error carries `landed` (what the panel
+  holds now) and the hint says to read the keys back instead of claiming the panel may be half
+  written and pointing at labs_restore.
+- Fix: labs_wait blocked for the whole timeout when compilation aborted. It returns after
+  engage.noShotS seconds (default 25) with diagnosis no_shots (no shot file appeared at all) or
+  compile_stalled (files stopped appearing), so the runmanager compile error can be read instead
+  of waiting 5-15 minutes. The hint says to call labs_wait again if a slow compile is expected.
+- Fix: a pending run that never produced a shot blocked labs_engage forever. A pending submission
+  with zero shots and older than engage.staleS (default 180 s) is dropped and reported as
+  dropped_stale_pending; the RUN_PENDING error now states the run's age and both ways out.
+- Fix: with pathMap configured, labs_wait(run_folder=<the folder labs_engage printed>) failed with
+  RUN_FOLDER_MISSING: the pending run kept the unmapped path and the wait compared strings. Pending
+  state now stores the mapped folder (raw kept as remote_run_folder) and both forms match.
+- Fix: shot h5 files that only hold compiled globals were counted as progress, so h5=1/64 looked
+  like "a shot ran". Progress reports n_h5 (files) and n_executed (shots with acquisition data,
+  located by binary search over the file order), completion requires acquisition data in the last
+  shot, and labs_status renders executed=.
+- labs_protocol show prints the closest key names for plan keys missing from the loaded labscript
+  (previously only the run path did), so stale protocols can be renamed without guessing.
+- labs_set description: one call can mix scalars, an expression scan axis and reps=N.
+- Tests: 28 python + 46 node, adding a client whose set_globals returns None, a stalled
+  compilation, a stale zero-shot pending run, mapped/raw pending folders and the show suggestions.
+
 ## 0.2.7
 
 - Fix: labs_wait no longer fails with "value is not lossless JSON". Tool results must be

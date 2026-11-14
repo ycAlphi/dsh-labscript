@@ -36,9 +36,12 @@ test('backend defaults to the simulator, not real hardware', () => {
 test('pending run state is persisted and reloaded after a restart', async () => {
   const plugin = makePlugin()
   await plugin.tools.get('labs_engage').execute({ note: 'persist test' }, { agent: {}, callId: 'c1' })
-  assert.equal(plugin.runtime.state.pending.run_folder, '/tmp/runs/run_000001')
+  // Pending state keeps the mapped folder (the raw one is in remote_run_folder) so that a
+  // mapped path quoted back by the agent still refers to the same run.
+  assert.equal(plugin.runtime.state.pending.run_folder, '/mnt/lab/runs/run_000001')
+  assert.equal(plugin.runtime.state.pending.remote_run_folder, '/tmp/runs/run_000001')
   const reloaded = makePlugin({ dshHome: plugin.dshHome })
-  assert.equal(reloaded.runtime.state.pending.run_folder, '/tmp/runs/run_000001')
+  assert.equal(reloaded.runtime.state.pending.run_folder, '/mnt/lab/runs/run_000001')
   await reloaded.tools.get('labs_wait').execute({}, { agent: {}, callId: 'c2' })
   assert.equal(reloaded.runtime.state.pending, null)
   const after = makePlugin({ dshHome: plugin.dshHome })

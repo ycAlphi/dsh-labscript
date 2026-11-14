@@ -114,6 +114,23 @@ def shot_executed(path):
     except Exception:
         return None
 
+
+def executed_prefix(shots):
+    """How many shot h5 files already hold acquisition data (binary search).
+
+    labscript compiles and submits shots in file order, so executed shots are a prefix
+    of the sorted file list. Opening a handful of files keeps this cheap even when the
+    run folder is a network share.
+    """
+    low, high = 0, len(shots)
+    while low < high:
+        middle = (low + high) // 2
+        if shot_executed(shots[middle]) is True:
+            low = middle + 1
+        else:
+            high = middle
+    return low
+
 # ---------------------------------------------------------------- scan expr
 
 _ALLOWED_CALLS = {"arange", "linspace", "array", "logspace"}
@@ -302,7 +319,11 @@ class LabscriptBackend(object):
         return dict(self.client().get_globals(raw=raw))
 
     def set_globals(self, values, raw=False):
-        return dict(self.client().set_globals(values, raw=raw))
+        # runmanager's set_globals is a side-effect RPC: its handler returns None, so
+        # never feed the reply to dict(). Report what was requested; the caller reads
+        # the panel back to verify.
+        written = self.client().set_globals(values, raw=raw)
+        return dict(written) if isinstance(written, dict) else dict(values)
 
     def n_shots(self):
         return int(self.client().n_shots())
@@ -988,21 +1009,25 @@ def cmd_set(config, args):
     snap = snapshot_panel(backend, config, "set", {"keys": sorted(values.keys()), "raw": raw, "note": args.get("note")}, touched=values.keys())
     try:
         written = backend.set_globals(values, raw=raw)
-    except BridgeError as exc:
-        detail = dict(exc.detail or {})
-        detail["snapshot"] = snap
-        detail["hint"] = "set_globals failed after the panel snapshot; the panel may be partially written. Use labs_restore to undo."
-        raise BridgeError(exc.code, exc.message, detail)
     except Exception as exc:
-        raise BridgeError("SET_FAILED", "set_globals failed: " + type(exc).__name__ + ": " + str(exc), {
-            "snapshot": snap,
-            "hint": "the panel may be partially written; use labs_restore to undo",
-        })
+        detail = dict(getattr(exc, "detail", None) or {})
+        detail["snapshot"] = snap
+        # A failed write can still have landed (runmanager writes each key in turn),
+        # so report what the panel holds now instead of guessing in the hint.
+        try:
+            now = backend.get_globals(raw=True)
+            detail["landed"] = dict((k, jsonable(now.get(k))) for k in values)
+        except Exception:
+            pass
+        detail["hint"] = "the write may have landed partially or not at all: read the keys back with labs_status before retrying, and only labs_restore if they are wrong"
+        raise BridgeError(getattr(exc, "code", None) or "SET_FAILED", "set_globals failed: " + type(exc).__name__ + ": " + str(exc), detail)
     readback = backend.get_globals(raw=False)
     raw_readback = backend.get_globals(raw=True)
     missing = [k for k in values if k not in readback]
     out = {
-        "written": jsonable(written),
+        # Report what was asked for even if a backend returns something else (runmanager's
+        # RPC returns nothing); the readback below carries the truth from the panel.
+        "written": jsonable(written) if isinstance(written, dict) else dict((k, jsonable(v)) for k, v in values.items()),
         "readback": dict((k, jsonable(readback.get(k))) for k in values),
         "raw_readback": dict((k, jsonable(raw_readback.get(k))) for k in values),
         "missing": missing,
@@ -1050,24 +1075,31 @@ def wait_for_run(config, run_folder, expected, timeout_s):
     poll = float(engage_cfg.get("pollS") or 1.0)
     settle = float(engage_cfg.get("settleS") or 2.0)
     stall = float(engage_cfg.get("stallS") or 20.0)
+    # labscript writes each shot h5 before compiling it, so a healthy compilation keeps
+    # adding files. When nothing has appeared for this long the compile almost certainly
+    # aborted; returning a diagnosis beats blocking for the full timeout_s.
+    no_shot = float(engage_cfg.get("noShotS") or 25.0)
+    want = int(expected or 0)
     start = time.time()
+    last_progress = start
     stable_since = None
     compiled_since = None
     last_count = -1
     last_size = -1
-    last_executed = None
+    shots = []
 
-    def result(complete, timed_out, diagnosis, count, executed, elapsed, hint=None):
+    def result(complete, timed_out, diagnosis, elapsed, hint=None):
         payload = {
             "run_folder": run_folder,
             "mapped_run_folder": folder,
             "folder_exists": os.path.isdir(folder),
             "expected_n_shots": expected,
-            "n_h5": count,
+            "n_h5": len(shots),
+            "n_executed": executed_prefix(shots),
             "complete": complete,
             "timed_out": timed_out,
             "diagnosis": diagnosis,
-            "executed": executed,
+            "executed": shot_executed(shots[-1]) if shots else None,
             "elapsed": round(elapsed, 1),
         }
         if hint:
@@ -1078,8 +1110,10 @@ def wait_for_run(config, run_folder, expected, timeout_s):
         shots = sorted(glob.glob(os.path.join(folder, "**", "*.h5"), recursive=True))
         count = len(shots)
         total = sum(os.path.getsize(p) for p in shots) if shots else 0
+        if count != last_count or total != last_size:
+            last_progress = time.time()
         ready = False
-        if count >= (expected or 0) and count == last_count and total == last_size and shots:
+        if count >= (want or 0) and count == last_count and total == last_size and shots:
             ready = shot_ready(shots[-1])
         executed = None
         if ready:
@@ -1089,7 +1123,7 @@ def wait_for_run(config, run_folder, expected, timeout_s):
             if stable_since is None:
                 stable_since = time.time()
             elif time.time() - stable_since >= settle:
-                return result(True, False, "complete", count, True, time.time() - start)
+                return result(True, False, "complete", time.time() - start)
         else:
             stable_since = None
             if ready and executed is False:
@@ -1097,19 +1131,31 @@ def wait_for_run(config, run_folder, expected, timeout_s):
                     compiled_since = time.time()
                 elif time.time() - compiled_since >= stall:
                     return result(
-                        False, False, "compiled_not_executed", count, False, time.time() - start,
+                        False, False, "compiled_not_executed", time.time() - start,
                         "shots were compiled but show no acquisition data after " + str(int(stall)) +
                         " s: BLACS may be paused / the queue may not be running, or the run is still being programmed. Check BLACS and the panel, then labs_abort if needed.")
             else:
                 compiled_since = None
         last_count = count
         last_size = total
-        last_executed = executed
+        quiet = time.time() - last_progress
+        if want and count < want and quiet >= no_shot:
+            if count == 0:
+                diagnosis = "no_shots"
+                hint = ("no shot h5 appeared in " + str(int(no_shot)) + " s: the compilation probably aborted "
+                        "(runmanager shows the error) or BLACS is not running. Check runmanager, call labs_wait "
+                        "again to keep waiting, or labs_abort.")
+            else:
+                diagnosis = "compile_stalled"
+                hint = ("compilation stopped at " + str(count) + " of " + str(want) + " shot h5 files and "
+                        "nothing changed for " + str(int(no_shot)) + " s: it probably aborted (runmanager shows "
+                        "the error). Check runmanager, call labs_wait again to keep waiting, or labs_abort.")
+            return result(False, False, diagnosis, time.time() - start, hint)
         if time.time() - start >= timeout:
             if count == 0:
                 diagnosis = "no_shots"
                 hint = "no shot h5 appeared: check that the run was accepted, that BLACS is running, and that pathMap points at the run folder."
-            elif count < (expected or 0):
+            elif count < want:
                 diagnosis = "compiling"
                 hint = "only " + str(count) + " of " + str(expected) + " shots appeared before the timeout; the run may still be compiling or blocked."
             elif executed is False:
@@ -1118,7 +1164,7 @@ def wait_for_run(config, run_folder, expected, timeout_s):
             else:
                 diagnosis = "partial"
                 hint = "shots appeared but the run was not confirmed complete before the timeout."
-            return result(False, True, diagnosis, count, executed, time.time() - start, hint)
+            return result(False, True, diagnosis, time.time() - start, hint)
         time.sleep(poll)
 
 
@@ -1146,7 +1192,20 @@ def cmd_progress(config, args):
     expected = int(args.get("expected_n_shots") or 0)
     folder = map_path(config, run_folder)
     shots = sorted(glob.glob(os.path.join(folder, "**", "*.h5"), recursive=True)) if folder else []
-    return {"run_folder": run_folder, "mapped_run_folder": folder, "folder_exists": bool(folder) and os.path.isdir(folder), "n_h5": len(shots), "expected_n_shots": expected, "complete": bool(expected and len(shots) >= expected)}
+    # n_h5 counts files, which labscript writes before compiling each shot; n_executed
+    # counts the shots that actually acquired data. A run is only complete when the
+    # last shot has acquisition data, not merely when the file count matches.
+    executed = executed_prefix(shots)
+    complete = bool(expected and len(shots) >= expected and executed == len(shots))
+    return {
+        "run_folder": run_folder,
+        "mapped_run_folder": folder,
+        "folder_exists": bool(folder) and os.path.isdir(folder),
+        "n_h5": len(shots),
+        "n_executed": executed,
+        "expected_n_shots": expected,
+        "complete": complete,
+    }
 
 
 

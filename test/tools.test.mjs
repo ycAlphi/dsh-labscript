@@ -138,7 +138,9 @@ test('labs_engage submits and sets pending, labs_wait clears it', async () => {
   assert.equal(engaged.n_shots_at_submit, 2)
   const status = await plugin.tools.get('labs_status').execute({}, exec)
   assert.ok(status.last_run)
-  assert.equal(status.last_run.run_folder, '/tmp/runs/run_000001')
+  // The pending run is stored under the mapped folder so that a mapped path quoted back
+  // by the agent still matches it.
+  assert.equal(status.last_run.run_folder, '/mnt/lab/runs/run_000001')
   const waited = await plugin.tools.get('labs_wait').execute({}, exec)
   assert.equal(waited.complete, true)
   assert.equal(waited.n_h5, 2)
@@ -220,4 +222,82 @@ test('protocol key warning asks for approval before running on real hardware', a
     assert.equal(error.code, 'APPROVAL_DENIED')
     return true
   })
+})
+
+
+test('labs_wait accepts the mapped run folder that labs_engage printed', async () => {
+  const plugin = makePlugin()
+  const engaged = await plugin.tools.get('labs_engage').execute({ note: 'mapped folder' }, exec)
+  const waited = await plugin.tools.get('labs_wait').execute({ run_folder: engaged.mapped_run_folder }, exec)
+  assert.equal(waited.complete, true)
+  assert.equal(waited.n_h5, 2)
+})
+
+test('labs_wait still accepts the raw runmanager folder of the pending run', async () => {
+  const plugin = makePlugin()
+  const engaged = await plugin.tools.get('labs_engage').execute({ note: 'raw folder' }, exec)
+  const waited = await plugin.tools.get('labs_wait').execute({ run_folder: engaged.run_folder }, exec)
+  assert.equal(waited.complete, true)
+})
+
+test('a pending run with no shots is dropped once it is stale', async () => {
+  const plugin = makePlugin({ engage: { timeoutS: 5, staleS: 60 } })
+  process.env.FAKE_ENGAGE_OLD_S = '600'
+  process.env.FAKE_PROGRESS = 'zero'
+  try {
+    await plugin.tools.get('labs_engage').execute({ note: 'the compilation dies' }, exec)
+    const second = await plugin.tools.get('labs_engage').execute({ note: 'retry' }, exec)
+    assert.ok(second.dropped_stale_pending, 'expected the dead submission to be dropped')
+    assert.equal(second.dropped_stale_pending.expected_n_shots, 2)
+    assert.ok(second.dropped_stale_pending.age_s >= 600, String(second.dropped_stale_pending.age_s))
+    assertLossless(second)
+    const text = plugin.tools.get('labs_engage').output.render({}, second)[0].text
+    assert.match(text, /dropped stale pending run: \/mnt\/lab\/runs\/run_000001 \(6\d\d s old, no shots ever appeared\)/)
+  } finally {
+    delete process.env.FAKE_ENGAGE_OLD_S
+    delete process.env.FAKE_PROGRESS
+  }
+})
+
+test('a fresh pending run still blocks the next engage', async () => {
+  const plugin = makePlugin()
+  await plugin.tools.get('labs_engage').execute({ note: 'first' }, exec)
+  await assert.rejects(
+    () => plugin.tools.get('labs_engage').execute({ note: 'second' }, exec),
+    (error) => error instanceof LabError && error.code === 'RUN_PENDING' &&
+      /still in progress/.test(error.message) && /labs_abort/.test(error.message),
+  )
+})
+
+test('labs_protocol show prints the closest script keys for missing plan keys', async () => {
+  const plugin = makePlugin()
+  const show = await plugin.tools.get('labs_protocol').execute({ action: 'show', protocol: 'demo_scan' }, exec)
+  const text = plugin.tools.get('labs_protocol').output.render({ action: 'show' }, show)[0].text
+  assert.match(text, /script key check: MISSING old_duration_key \(closest: duration_test_us\)/)
+})
+
+test('labs_status shows how many shots already acquired data', () => {
+  const plugin = makePlugin()
+  const value = {
+    backend: 'mock-labscript',
+    labscript: 'mock_sequence.py',
+    shot_output_folder: '/tmp/runs',
+    globals: {},
+    n_shots: 5,
+    error_in_globals: false,
+    run_shots: true,
+    panel_history: { dir: '/tmp/history', latest: null, count: 0 },
+    last_run: {
+      kind: 'engage',
+      run_folder: '/tmp/runs/run_000003',
+      mapped_run_folder: '/mnt/lab/runs/run_000003',
+      expected_n_shots: 5,
+      n_h5: 5,
+      n_executed: 2,
+      complete: false,
+      elapsed_s: 12,
+    },
+  }
+  const text = plugin.tools.get('labs_status').output.render({}, value)[0].text
+  assert.match(text, /h5=5\/5  executed=2  complete=false  elapsed=12s/)
 })

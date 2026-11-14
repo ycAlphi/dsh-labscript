@@ -8,6 +8,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -274,6 +275,159 @@ def test_wait_diagnosis_compiled_not_executed():
         assert result["diagnosis"] == "compiled_not_executed", result
         assert result["executed"] is False, result
     finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def write_shot(path, executed):
+    """Write a shot h5 like labscript does: globals first, acquisition data later."""
+    import h5py
+    with h5py.File(path, "w") as handle:
+        handle.create_group("globals")
+        if executed:
+            label = handle.create_group("images/camera/label")
+            label.create_dataset("frame", data=[1.0, 2.0])
+
+
+def test_wait_reports_stalled_compilation_early():
+    """A compile that dies after one shot h5 must not block for the whole timeout."""
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-stalled-")
+    try:
+        cfg = make_config(tmp)
+        cfg["engage"] = {"timeoutS": 10, "pollS": 0.05, "settleS": 0.1, "noShotS": 0.3}
+        run_dir = os.path.join(tmp, "stalled_run")
+        os.makedirs(run_dir, exist_ok=True)
+        write_shot(os.path.join(run_dir, "shot_0000.h5"), executed=False)
+        started = time.time()
+        result = bridge.wait_for_run(cfg, run_dir, 64, 10)
+        elapsed = time.time() - started
+        assert result["diagnosis"] == "compile_stalled", result
+        assert result["timed_out"] is False, result
+        assert result["n_h5"] == 1, result
+        assert result["n_executed"] == 0, result
+        assert elapsed < 3.0, elapsed
+        assert "aborted" in result["hint"], result
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_wait_reports_no_shots_early():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-noshots-")
+    try:
+        cfg = make_config(tmp)
+        cfg["engage"] = {"timeoutS": 10, "pollS": 0.05, "settleS": 0.1, "noShotS": 0.3}
+        run_dir = os.path.join(tmp, "empty_run")
+        os.makedirs(run_dir, exist_ok=True)
+        started = time.time()
+        result = bridge.wait_for_run(cfg, run_dir, 64, 10)
+        elapsed = time.time() - started
+        assert result["diagnosis"] == "no_shots", result
+        assert result["timed_out"] is False, result
+        assert result["n_h5"] == 0 and result["n_executed"] == 0, result
+        assert elapsed < 3.0, elapsed
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_progress_separates_files_from_executed_shots():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-progress-exec-")
+    try:
+        cfg = make_config(tmp)
+        compiled = os.path.join(tmp, "compiled_run")
+        os.makedirs(compiled, exist_ok=True)
+        write_shot(os.path.join(compiled, "shot_0000.h5"), executed=True)
+        write_shot(os.path.join(compiled, "shot_0001.h5"), executed=False)
+        write_shot(os.path.join(compiled, "shot_0002.h5"), executed=False)
+        out = bridge.cmd_progress(cfg, {"run_folder": compiled, "expected_n_shots": 3})
+        assert out["n_h5"] == 3, out
+        assert out["n_executed"] == 1, out
+        assert out["complete"] is False, out
+        done = os.path.join(tmp, "done_run")
+        os.makedirs(done, exist_ok=True)
+        for index in range(2):
+            write_shot(os.path.join(done, "shot_000%d.h5" % index), executed=True)
+        finished = bridge.cmd_progress(cfg, {"run_folder": done, "expected_n_shots": 2})
+        assert finished["complete"] is True, finished
+        assert finished["n_executed"] == 2, finished
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_real_backend_set_globals_survives_none_reply():
+    """runmanager's set_globals returns None; the write must still be reported."""
+    class FakeClient(object):
+        def __init__(self):
+            self.calls = []
+
+        def set_globals(self, values, raw=False):
+            self.calls.append((dict(values), raw))
+            return None
+
+    client = FakeClient()
+    backend = bridge.LabscriptBackend({})
+    backend._client = client
+    written = backend.set_globals({"do_acquire": True, "amplitude": 0.5})
+    assert written == {"do_acquire": True, "amplitude": 0.5}, written
+    assert client.calls == [({"do_acquire": True, "amplitude": 0.5}, False)], client.calls
+
+
+def test_cmd_set_accepts_backend_that_returns_none():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-set-none-")
+    try:
+        cfg = make_config(tmp)
+        original = bridge.make_backend
+
+        def make(config):
+            backend = bridge.MockBackend(config)
+
+            def set_globals(values, raw=False):
+                bridge.MockBackend.set_globals(backend, values, raw=raw)
+                return None
+
+            backend.set_globals = set_globals
+            return backend
+
+        bridge.make_backend = make
+        try:
+            out = bridge.cmd_set(cfg, {"values": {"amplitude": 0.71}, "note": "None-returning client"})
+        finally:
+            bridge.make_backend = original
+        assert out["missing"] == [], out
+        assert out["readback"]["amplitude"] == 0.71, out
+        assert out["written"] == {"amplitude": 0.71}, out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_cmd_set_failure_reports_what_landed():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-set-partial-")
+    try:
+        cfg = make_config(tmp)
+        original = bridge.make_backend
+
+        def make(config):
+            backend = bridge.MockBackend(config)
+
+            def set_globals(values, raw=False):
+                if "amplitude" in values:
+                    bridge.MockBackend.set_globals(backend, {"amplitude": values["amplitude"]}, raw=raw)
+                raise ValueError("Global nope not found in any active group")
+
+            backend.set_globals = set_globals
+            return backend
+
+        bridge.make_backend = make
+        try:
+            bridge.cmd_set(cfg, {"values": {"amplitude": 0.71, "nope": 1}})
+        except bridge.BridgeError as exc:
+            assert exc.code == "SET_FAILED", exc.code
+            assert "not found" in exc.message, exc.message
+            assert exc.detail["snapshot"]["name"].endswith(".json"), exc.detail
+            assert exc.detail["landed"]["amplitude"] == "0.71", exc.detail
+            assert "labs_status" in exc.detail["hint"], exc.detail
+        else:
+            raise AssertionError("expected SET_FAILED")
+    finally:
+        bridge.make_backend = original
         shutil.rmtree(tmp, ignore_errors=True)
 
 

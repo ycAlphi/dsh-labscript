@@ -11,7 +11,7 @@ hard limits 全部通过配置接入。
 |---|---|
 | labs_doctor | 只读诊断：python、numpy/h5py、labscript/runmanager、路径、审批、版本 |
 | labs_status | 读面板：labscript、globals、n_shots、error_in_globals、run_shots、pending 进度 |
-| labs_set | 写面板（标量 / raw 表达式 / reps），写前全量快照；不运行 |
+| labs_set | 写面板（标量 / raw 表达式 / reps 可一次混用），写前全量快照；不运行 |
 | labs_engage | 提交当前面板，立即返回 n_shots_at_submit 与 expected_n_shots |
 | labs_wait | 等待 pending run（可超时）；若是协议则收尾：postprocess → finish 写回 → restore |
 | labs_abort | 中止当前提交（不排队，不会被 labs_wait 堵住） |
@@ -28,8 +28,8 @@ hard limits 全部通过配置接入。
   真机用 labscript-suite 环境。详见 docs/INSTALL.zh.md。
 - 默认 backend 是 mock-labscript；真机必须显式配置 backend: labscript。
 - 安装后在 DSH 插件页填 backend、python、runmanager host/port、protocolsDir；
-  其余高级配置（scriptsFile、hard limits、postprocess、approval、pathMap）写在
-  profile 的 cordis.patch.yml。
+  其余高级配置（scriptsFile、hard limits、postprocess、approval、pathMap、
+  engage 的超时/早退参数）写在 profile 的 cordis.patch.yml。
 
 ## 协议 YAML
 
@@ -52,6 +52,14 @@ postprocess 是后处理：跑完后调用配置的 Python 函数（entry + pyth
 - 真机 engage / protocol run 会请求 DSH 审批（一次），abort 和面板写入不请求；
   插件不是硬件联锁。
 - labscript abort 只停止编译/提交新的 shot，已进 BLACS 队列或正在跑的 shot 不会被停。
-- 完成判定基于 HDF5 数量、大小稳定和最后一发可读；BLACS paused 会报
-  compiled_not_executed 诊断。
+- 完成判定基于 HDF5 数量、大小稳定和最后一发可读。shot 的 h5 文件在编译阶段就写了出来，
+  所以 labs_status 分别报 h5（文件数）和 executed（真正采到数据的枪数），完成要求最后一发
+  有采集数据；BLACS paused 会报 compiled_not_executed 诊断。
+- 编译 abort 时 labs_wait 不再等满 timeout：距今没有任何新 shot 超过 engage.noShotS
+  （默认 25 s）就返回 no_shots / compile_stalled 诊断，去 runmanager 看编译错误；如果只是
+  编译慢，再调一次 labs_wait 继续等。
+- 一条一枪都没产生的 pending 提交，超过 engage.staleS（默认 180 s）会被下一次 labs_engage
+  丢弃并报 dropped_stale_pending，不再永久挡住提交；RUN_PENDING 的错误里也会写清年龄和两种出路。
+- 配了 pathMap 时 pending 记录映射后的目录（原始路径保留为 remote_run_folder），所以
+  labs_wait 传映射后目录或原始目录都能对上，不会再说"run folder does not exist"。
 

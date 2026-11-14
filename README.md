@@ -103,6 +103,14 @@ already mapped: `labs_status`, `labs_engage`, `labs_wait`, `labs_data` and
 `labs_protocol` show local paths, while `run_folder` keeps the raw runmanager
 value next to `mapped_run_folder`.
 
+`engage` controls how a submitted run is watched: `timeoutS` (default 900) is the
+total wait budget of one `labs_wait`, `noShotS` (default 25) makes the wait return
+early with a diagnosis when no shot appeared, `staleS` (default 180) drops a pending
+submission that never produced a single shot, `pollS`, `settleS` and `stallS` tune the
+polling and the compiled-not-executed detection.
+
+    engage: { timeoutS: 900, noShotS: 25, staleS: 180, stallS: 20 }
+
 The python interpreter must be able to import numpy and h5py; the real backend
 also needs runmanager (labscript-suite). The plugin never stores credentials:
 zprocess authentication is read by labscript itself from labconfig.
@@ -125,8 +133,8 @@ is not a physics simulation.
 ## Development
 
     npm install              # only runtime dependency: yaml
-    npm test                 # node --test, 40 tests (fake bridge, no python needed)
-    python python/tests/run_tests.py   # 22 tests (needs numpy + h5py)
+    npm test                 # node --test, 46 tests (fake bridge, no python needed)
+    python python/tests/run_tests.py   # 28 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 
 A fresh clone must run `npm install` before `npm test`; the CI workflow does this.
@@ -153,9 +161,19 @@ A fresh clone must run `npm install` before `npm test`; the CI workflow does thi
   explicitly when something must stop; labs_abort also cancels an in-flight labs_wait.
   labscript abort stops compiling/submitting new shots; shots already queued in BLACS
   or running are not stopped.
-- labs_wait reports a diagnosis (complete, no_shots, compiling, compiled_not_executed,
-  partial). compiled_not_executed means shots exist but show no acquisition data yet;
-  BLACS may be paused or not executing the queue.
+- labs_wait reports a diagnosis (complete, no_shots, compile_stalled, compiling,
+  compiled_not_executed, partial). no_shots and compile_stalled come back before the
+  timeout when nothing new appeared for engage.noShotS seconds: runmanager probably
+  aborted the compilation, so read its output. compiled_not_executed means shots were
+  compiled but show no acquisition data yet; BLACS may be paused or not executing the queue.
+- labs_engage only reports that runmanager accepted the submission; compilation errors are
+  invisible to it. A pending submission with no shots at all is dropped after
+  engage.staleS seconds and reported as dropped_stale_pending, so a dead run does not block
+  the next one forever.
+- Shot h5 files exist before they are executed: progress reports n_h5 (files) and
+  n_executed (shots with acquisition data), and completion requires acquisition data.
+- The pending run is stored under the pathMap-mapped folder (the raw runmanager path is kept
+  as remote_run_folder), so labs_wait accepts whichever of the two an agent quotes back.
 - Real runmanager engage does not return a run folder; the bridge captures the
   output folder before engage and reports it as the run folder. That shot output
   folder is the NEXT run's folder and does not exist until engage, so labs_data

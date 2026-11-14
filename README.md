@@ -107,7 +107,8 @@ value next to `mapped_run_folder`.
 (`[servers] runmanager`, `[ports] runmanager` — default 42523 — and
 `[timeouts] communication_timeout` — default 60 s), the same way `runmanager.remote.Client`
 resolves them. Configured values override labconfig. The Plugins page leaves host/port blank
-for that reason; typing them pins them.
+for that reason; typing them pins them. The DSH-side bridge budget (`requestTimeoutMs`,
+default 180 s) stays above that timeout, so a slow RPC is not cut short by the host.
 
 `engage` controls how a submitted run is watched: `timeoutS` (default 900) is the
 total wait budget of one `labs_wait`, `noShotS` (default 25) makes the wait return

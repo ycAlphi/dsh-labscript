@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- The DSH-side bridge budget (`requestTimeoutMs`) now defaults to 180 s instead of 60 s, and the
+  `labs_doctor` probe uses it too. It has to stay above runmanager's own client timeout, which
+  now comes from labconfig (`[timeouts] communication_timeout`): at 60 s both budgets were equal,
+  so a slow RPC would be killed by the host before runmanager could report the real error.
+
 ## 0.3.0
 
 Implements the upstream request written from the field (labscript-suite workflow terms and

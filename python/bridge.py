@@ -1119,6 +1119,14 @@ def cmd_engage(config, args):
     return out
 
 
+# Same cause list for the stall branch and the timeout branch: BLACS did not run the shot.
+BLACS_NO_DATA_HINT = (
+    "shot files exist but show no acquisition data: BLACS may be paused, may have kept the shot out of its queue "
+    "(a shot's connection table must be a subset of the lab connection table) or re-queued it after a device "
+    "programming timeout. Check the BLACS GUI, then labs_abort if needed."
+)
+
+
 def wait_for_run(config, run_folder, expected, timeout_s):
     if not run_folder:
         raise BridgeError("BAD_ARGS", "run_folder is required")
@@ -1188,13 +1196,7 @@ def wait_for_run(config, run_folder, expected, timeout_s):
                 if compiled_since is None:
                     compiled_since = time.time()
                 elif time.time() - compiled_since >= stall:
-                    return result(
-                        False, False, "compiled_not_executed", time.time() - start,
-                        "shot files exist but show no acquisition data after " + str(int(stall)) + " s: BLACS may be "
-                        "paused, or it kept the shot out of the queue (its connection table must be a subset of the "
-                        "lab connection table) or a device group failed to program within 5 minutes (the queue then "
-                        "pauses and puts that shot back at its head), or the run is still being programmed. Check the "
-                        "BLACS GUI and the panel, then labs_abort if needed.")
+                    return result(False, False, "compiled_not_executed", time.time() - start, BLACS_NO_DATA_HINT)
             else:
                 compiled_since = None
         last_count = count
@@ -1221,9 +1223,7 @@ def wait_for_run(config, run_folder, expected, timeout_s):
                 hint = "only " + str(count) + " of " + str(expected) + " shots appeared before the timeout; the run may still be compiling or blocked."
             elif executed is False:
                 diagnosis = "compiled_not_executed"
-                hint = ("shot files exist but no acquisition data was found: BLACS may be paused, may have refused the "
-                        "shot (connection table not a subset of the lab connection table) or re-queued it after a device "
-                        "programming timeout. Check the BLACS GUI.")
+                hint = BLACS_NO_DATA_HINT
             else:
                 diagnosis = "partial"
                 hint = "shots appeared but the run was not confirmed complete before the timeout."

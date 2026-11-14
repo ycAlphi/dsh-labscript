@@ -1,24 +1,17 @@
 # Changelog
 
-## 0.3.1
-
-- The DSH-side bridge budget (`requestTimeoutMs`) now defaults to 180 s instead of 60 s, and the
-  `labs_doctor` probe uses it too. It has to stay above runmanager's own client timeout, which
-  now comes from labconfig (`[timeouts] communication_timeout`): at 60 s both budgets were equal,
-  so a slow RPC would be killed by the host before runmanager could report the real error.
-
-## 0.3.0
+## 0.3.2
 
 Implements the upstream request written from the field (labscript-suite workflow terms and
 `runmanager.remote` limits). No output field is renamed or removed.
 
-- `n_shots` is now documented and rendered as the authoritative shot count. The scan-axes line is
+- `n_shots` is documented and rendered as the authoritative shot count. The scan-axes line is
   labelled a heuristic: runmanager expands list/array globals but passes tuples through, and an
   expansion setting of `none` turns an array into a non-axis; neither is visible through
-  `runmanager.remote`. A mismatch now reads "n_shots is authoritative (a tuple global or an
-  expansion setting of none is not an axis)" instead of printing two numbers with no verdict. The
-  bridge's axis guess ignores tuples and dicts, and the mock backend follows the same rule (it used
-  to multiply tuples in, pinning the wrong semantics into the tests).
+  `runmanager.remote`. A mismatch reads "n_shots is authoritative" instead of printing two numbers
+  with no verdict. The bridge's axis guess ignores tuples and dicts, and the mock backend follows the
+  same rule (it used to multiply tuples in, pinning the wrong semantics into the tests); the mock
+  also keeps Python types, without which the tuple/list distinction was untestable.
 - Skill and tool descriptions no longer tell the agent to "read the runmanager output": compilation
   errors appear only in runmanager's output tab (the compiler subprocess writes its traceback to
   stderr and runmanager redirects it to an in-memory Qt widget), so the instruction is now to say
@@ -28,16 +21,17 @@ Implements the upstream request written from the field (labscript-suite workflow
 - `compiled_not_executed` explains the other official causes: BLACS may keep a shot out of its
   queue (the shot's connection table must be a subset of the lab connection table) or put it back
   at the head after a device programming timeout; all of that is visible only in the BLACS GUI.
-  More shot files than expected now points at a changed panel or BLACS Repeat all / Repeat last,
-  which re-runs completed shots without creating new files.
+  More shot files than expected points at a changed panel or BLACS Repeat all / Repeat last, which
+  re-runs completed shots without creating new files.
 - `labs_status` reports `shuffle` (from `get_shuffle`; "unknown" when that runmanager version has
   no such method). With shuffle on, shot order is not axis order: read each shot's parameters from
   its own h5 globals.
 - runmanager host/port/timeout default to labscript's labconfig when unset, resolved by
   `runmanager.remote.Client` itself (`[servers]/[ports]/[timeouts]`, port 42523, timeout 60 s);
-  configured values still win. The Plugins page now leaves host/port blank for that reason, and
-  clearing them hands the endpoint back to labconfig. `labs_doctor` prints the effective endpoint
-  and whether it came from config or labconfig.
+  configured values still win. The Plugins page leaves host/port blank for that reason, and clearing
+  them hands the endpoint back to labconfig. `labs_doctor` prints the effective endpoint and its
+  source. The DSH-side bridge budget (`requestTimeoutMs`) defaults to 180 s so it stays above
+  runmanager's client timeout instead of racing it.
 - mock backend: `mock.errorInGlobals` makes `error_in_globals` true so the engagement refusal can
   be tested, and `mock.shuffle` sets the reported shuffle flag.
 - Docs: a terminology table maps the plugin's short names to the suite's (shot output folder,
@@ -45,8 +39,10 @@ Implements the upstream request written from the field (labscript-suite workflow
 - Compilation logs stay out of scope: nothing about a compilation failure is written anywhere
   readable (see README), so no `labs_compile_log` was added; a guessed diagnosis would be worse
   than none.
-- Tests: 33 python + 47 node (axis heuristic with tuples/dicts, mock error/shuffle switches,
-  labconfig client defaults, extra shot files, scan/shuffle rendering, endpoint clearing).
+- Tool descriptions stay close to their 0.2.8 size (+147 characters): the explanations live in the
+  runtime skill (loaded on demand) and in the wait/engage diagnostics (shown only when they matter),
+  so they do not sit in context on every turn.
+- Tests: 33 python + 47 node.
 
 ## 0.2.8
 

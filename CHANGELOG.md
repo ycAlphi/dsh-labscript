@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.3
+
+Makes the tools report what actually happened instead of hiding it, and removes a backend
+nobody could reach. Net change is negative: about 40 lines of reporting added, a dead
+backend removed.
+
+- `labs_doctor` no longer imports labscript to check the environment. That import has side
+  effects (labscript's double-import denier walks the stack and leaves half-initialised
+  modules behind) and it broke the runmanager probe that runs right after it in the same
+  process, so a working environment was reported as two `[fail]` lines pointing at an h5py
+  path. The check is now `importlib.util.find_spec` (presence only: nothing in this plugin
+  imports labscript), error messages keep the exception type instead of only its text, and
+  doctor prints `python-executable` so "wrong interpreter" is visible at a glance.
+- `labs_status` prints a panel field passed as if it were a global (`keys: ["n_shots"]`) as
+  `<value> (panel field, not a global)` instead of `<missing>`.
+- `finish.panel` and `finish.history` report values they cannot write as `finish.skipped`,
+  with the dotted path and the reason (`missing` / `not a number (str)`); `labs_wait` renders
+  one `finish skipped:` line. These used to be dropped without a word, which reads exactly
+  like "the calibration number did not land".
+- Postprocess receives `scan_globals` (every axis, in plan order) when its signature accepts
+  it; `scan_global` is unchanged. Dispatch uses `inspect.signature` instead of retrying on
+  `TypeError`, which also stops a `TypeError` raised inside the analysis function from running
+  it a second time.
+- Removed the `http-sim` backend: an HTTP client for a local simulator service, added for a
+  one-off benchmark in v0.1 and later renamed to hide the internal service name. It had no
+  tests, no documentation and no entry on the Plugins page. `backend` is `labscript` or
+  `mock-labscript` again.
+- Tests: 38 python + 49 node.
+
 ## 0.3.2
 
 Implements the upstream request written from the field (labscript-suite workflow terms and

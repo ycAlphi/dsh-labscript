@@ -15,6 +15,8 @@ import sys
 import time
 import datetime
 import importlib
+import importlib.util
+import inspect
 import traceback
 
 
@@ -318,7 +320,7 @@ class LabscriptBackend(object):
         try:
             from runmanager.remote import Client
         except Exception as exc:
-            raise BridgeError("BACKEND_UNAVAILABLE", "labscript python environment not importable: " + str(exc))
+            raise BridgeError("BACKEND_UNAVAILABLE", "labscript python environment not importable: " + type(exc).__name__ + ": " + str(exc))
         # Anything left unset is resolved by runmanager.remote.Client from labscript's
         # labconfig ([servers] runmanager, [ports] runmanager, [timeouts]
         # communication_timeout), the same way the runmanager GUI does it. Explicit
@@ -538,113 +540,10 @@ class MockBackend(object):
         return {"aborted": True, "mode": "mock-labscript"}
 
 
-class HttpSimBackend(object):
-    """HTTP client for an optional local simulator service (development backend).
-
-    The simulator must speak the documented JSON/HTTP contract on a loopback address.
-    It is a development tool, not a physics backend for publication.
-    """
-
-    def __init__(self, config):
-        simulator = config.get("simulator") or {}
-        url = str(simulator.get("url") or "http://127.0.0.1:18761").rstrip("/")
-        if not url.startswith("http://127.0.0.1:"):
-            raise BridgeError("BAD_CONFIG", "simulator.url must be http://127.0.0.1:<port>, got: " + url)
-        self.base = url
-        self.timeout = float(simulator.get("timeoutS") or 10)
-        self._opener = None
-
-    def opener(self):
-        import urllib.request
-        if self._opener is not None:
-            return self._opener
-
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
-
-        self._opener = urllib.request.build_opener(NoRedirect, urllib.request.ProxyHandler({}))
-        return self._opener
-
-    def request(self, method, path, body=None):
-        import urllib.request
-        import urllib.error
-        data = None
-        headers = {}
-        if body is not None:
-            data = json.dumps(jsonable(body)).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
-        try:
-            with self.opener().open(req, timeout=self.timeout) as response:
-                raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            try:
-                payload = json.loads(exc.read().decode("utf-8"))
-            except Exception:
-                raise BridgeError("BACKEND_UNAVAILABLE", "http-sim HTTP " + str(exc.code) + " at " + path)
-            error = payload.get("error") or {}
-            raise BridgeError(str(error.get("code") or "BACKEND_UNAVAILABLE"), str(error.get("message") or "http-sim error"))
-        except Exception as exc:
-            raise BridgeError("BACKEND_UNAVAILABLE", "http-sim not reachable at " + self.base + ": " + str(exc))
-        try:
-            envelope = json.loads(raw)
-        except Exception:
-            raise BridgeError("BACKEND_UNAVAILABLE", "http-sim response is not JSON")
-        if envelope.get("ok") is not True:
-            error = envelope.get("error") or {}
-            raise BridgeError(str(error.get("code") or "BACKEND_UNAVAILABLE"), str(error.get("message") or "http-sim error"))
-        return envelope.get("data") or {}
-
-    def snapshot(self):
-        return self.request("GET", "/v1/rm/snapshot")
-
-    def get_globals(self, raw=False):
-        snap = self.snapshot()
-        key = "raw_globals" if raw else "globals"
-        return dict(snap.get(key) or {})
-
-    def set_globals(self, values, raw=False):
-        body = dict((k, v.tolist() if hasattr(v, "tolist") else v) for k, v in values.items())
-        data = self.request("POST", "/v1/rm/set_globals", {"values": body, "raw": bool(raw)})
-        return dict(data.get("written") or {})
-
-    def n_shots(self):
-        return int(self.snapshot().get("n_shots") or 0)
-
-    def error_in_globals(self):
-        return bool(self.snapshot().get("error_in_globals"))
-
-    def run_shots(self):
-        return True
-
-    def shuffle(self):
-        snap = self.snapshot()
-        return bool(snap.get("shuffle")) if "shuffle" in snap else None
-
-    def labscript_file(self):
-        return self.snapshot().get("labscript_file")
-
-    def shot_output_folder(self):
-        return self.snapshot().get("shot_output_folder")
-
-    def engage(self):
-        data = self.request("POST", "/v1/rm/engage", {})
-        if data.get("accepted") is not True:
-            raise BridgeError("ENGAGE_REJECTED", "http-sim did not accept engage: " + str(data.get("detail") or ""))
-        return {"accepted": True, "n_shots": data.get("n_shots"), "run_folder": data.get("run_folder"), "mode": "http-sim"}
-
-    def abort(self):
-        data = self.request("POST", "/v1/blacs/stop", {})
-        return {"aborted": True, "via": "http-sim/blacs/stop", "result": data}
-
-
 def make_backend(config):
     backend = (config.get("backend") or "mock-labscript").lower()
     if backend == "mock-labscript":
         return MockBackend(config)
-    if backend == "http-sim":
-        return HttpSimBackend(config)
     if backend == "labscript":
         return LabscriptBackend(config)
     raise BridgeError("BAD_CONFIG", "unknown backend: " + backend)
@@ -791,7 +690,7 @@ def check_limits(config, set_values, scan_values, expected_n_shots):
 # ---------------------------------------------------------------- postprocess
 
 
-def run_postprocess(config, plan, run_folder, scan_global, reps):
+def run_postprocess(config, plan, run_folder, scan_globals, reps):
     name = plan.get("postprocess")
     if not name:
         return None
@@ -812,38 +711,61 @@ def run_postprocess(config, plan, run_folder, scan_global, reps):
         func = getattr(module, func_name)
     except Exception as exc:
         raise BridgeError("POSTPROCESS_IMPORT_FAILED", "cannot import postprocess " + entry + ": " + str(exc))
+    axes = [str(key) for key in (scan_globals or [])]
+    scan_global = axes[0] if axes else None
+    kwargs = {"run_folder": run_folder, "scan_global": scan_global, "reps": reps, "name": name}
     try:
-        result = func(run_folder=run_folder, scan_global=scan_global, reps=reps, name=name)
-    except TypeError:
-        try:
-            result = func(run_folder, scan_global, reps, name)
-        except Exception as exc:
-            raise BridgeError("POSTPROCESS_FAILED", "postprocess raised: " + str(exc))
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "scan_globals" in params or any(param.kind is param.VAR_KEYWORD for param in params.values()):
+        kwargs["scan_globals"] = axes
+    if not all(key in params for key in kwargs if key != "scan_globals"):
+        # Positional-only or differently named parameters: keep the historical call.
+        kwargs = {}
+    try:
+        result = func(**kwargs) if kwargs else func(run_folder, scan_global, reps, name)
     except Exception as exc:
-        raise BridgeError("POSTPROCESS_FAILED", "postprocess raised: " + str(exc))
+        raise BridgeError("POSTPROCESS_FAILED", "postprocess raised: " + type(exc).__name__ + ": " + str(exc))
     if not isinstance(result, dict):
         raise BridgeError("POSTPROCESS_BAD_RESULT", "postprocess must return a dict, got " + type(result).__name__)
     return jsonable(result)
 
 
-def resolve_dotted(obj, dotted):
+_MISSING = object()
+
+
+def resolve_dotted(obj, dotted, default=None):
     current = obj
     for part in str(dotted).split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
+        if not isinstance(current, dict) or part not in current:
+            return default
+        current = current[part]
     return current
+
+
+def finish_value(result, dotted):
+    """(number, None) for a usable finish.* value, else (None, reason)."""
+    resolved = resolve_dotted(result, dotted, _MISSING)
+    if resolved is _MISSING:
+        return None, "missing"
+    value = as_number(resolved)
+    if value is None:
+        return None, "not a number (" + type(resolved).__name__ + ")"
+    return value, None
 
 
 def apply_finish(backend, config, plan, result, run_folder):
     out = {}
+    skipped = []
     finish = plan.get("finish") or {}
-    panel = finish.get("panel") or {}
     writes = {}
-    for key, dotted in panel.items():
-        value = as_number(resolve_dotted(result, dotted))
-        if value is not None:
-            writes[str(key)] = value
+    for key, dotted in (finish.get("panel") or {}).items():
+        value, reason = finish_value(result, dotted)
+        if value is None:
+            skipped.append({"target": "panel", "key": str(key), "dotted": str(dotted), "reason": reason})
+            continue
+        writes[str(key)] = value
     if writes:
         out["panel"] = jsonable(backend.set_globals(writes, raw=False))
     history = finish.get("history") or {}
@@ -854,8 +776,9 @@ def apply_finish(backend, config, plan, result, run_folder):
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as handle:
             for key, dotted in history.items():
-                value = as_number(resolve_dotted(result, dotted))
+                value, reason = finish_value(result, dotted)
                 if value is None:
+                    skipped.append({"target": "history", "key": str(key), "dotted": str(dotted), "reason": reason})
                     continue
                 row = {
                     "ts": now_iso(),
@@ -869,6 +792,8 @@ def apply_finish(backend, config, plan, result, run_folder):
                 rows.append(row)
     if rows:
         out["history"] = rows
+    if skipped:
+        out["skipped"] = skipped
     return out
 
 
@@ -1241,8 +1166,6 @@ def cmd_abort(config, args):
     if backend_name == "labscript":
         note = ("labscript abort stops compiling/submitting new shots. Shots that are already compiled and queued "
                 "in BLACS, or currently running, are not stopped by it. This is not a hardware interlock.")
-    elif backend_name == "http-sim":
-        note = "http-sim abort stops the simulated queue (pause + clear)."
     else:
         note = "mock backend abort is a no-op."
     result = backend.abort()
@@ -1527,8 +1450,8 @@ def cmd_protocol_finalize(config, args):
     out = {"run_folder": run_folder}
     result = None
     if plan.get("postprocess"):
-        scan_global = next(iter(plan["scan"]), None) if plan["scan"] else None
-        result = run_postprocess(config, plan, map_path(config, run_folder), scan_global, plan["reps"])
+        scan_globals = [str(key) for key in plan["scan"]]
+        result = run_postprocess(config, plan, map_path(config, run_folder), scan_globals, plan["reps"])
         out["postprocess"] = result
     if plan.get("finish"):
         out["finish"] = apply_finish(backend, config, plan, result or {}, run_folder)
@@ -1560,17 +1483,25 @@ def cmd_doctor(config, args):
 
     backend = (config.get("backend") or "mock-labscript").lower()
     _add_check(checks, "backend", "ok", backend)
+    _add_check(checks, "python-executable", "ok", sys.executable)
     if backend == "labscript":
+        # Presence only: importing labscript in this process has side effects (its
+        # double-import denier walks the stack and leaves half-initialised modules
+        # behind), which used to break the runmanager checks below and turn a working
+        # environment into a false negative. Nothing here imports labscript itself.
         missing = []
         for module in ("labscript", "runmanager", "labscript_utils", "zprocess"):
             try:
-                importlib.import_module(module)
+                present = importlib.util.find_spec(module) is not None
             except Exception as exc:
-                missing.append(module + ": " + str(exc))
+                missing.append(module + ": " + type(exc).__name__ + ": " + str(exc))
+                continue
+            if not present:
+                missing.append(module + ": not installed")
         if missing:
             _add_check(checks, "labscript-suite", "fail", "; ".join(missing), "use the labscript-suite python environment")
         else:
-            _add_check(checks, "labscript-suite", "ok", "labscript / runmanager / labscript_utils / zprocess importable")
+            _add_check(checks, "labscript-suite", "ok", "labscript / runmanager / labscript_utils / zprocess installed")
         try:
             probe = LabscriptBackend(config)
             client = probe.client()

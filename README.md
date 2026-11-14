@@ -9,7 +9,7 @@ files. It does not require any custom BLACS/lyse patch. Everything lab-specific
 
 ## Status
 
-v0.2.0. The mock-labscript backend, the protocol/postprocess flow and the
+v0.3.3. The mock-labscript backend, the protocol/postprocess flow and the
 snapshot/diagnosis behaviour are covered by node and python tests. A client
 configuration page (Plugins page) and a read-only `labs_doctor` are included. The real
 labscript backend is implemented against the stock runmanager remote API but has
@@ -74,6 +74,11 @@ guess panel state).
     labs_protocol show demo_scan     # validates the plan and hard limits
     labs_protocol run demo_scan      # set + scan + reps + engage, returns immediately
     labs_wait                        # waits, then postprocess -> finish -> restore
+
+`postprocess.entry` is called as `analyze(run_folder, scan_global, reps, name)`; when the
+function accepts it, `scan_globals=[...]` (every axis, in order) is passed as well, so a 2D
+scan is not limited to its first axis. A `finish` value that is missing or not a number is
+reported as `skipped` and printed by `labs_wait` instead of being dropped silently.
 
 ## Configuration
 
@@ -140,8 +145,8 @@ is not a physics simulation.
 ## Development
 
     npm install              # only runtime dependency: yaml
-    npm test                 # node --test, 47 tests (fake bridge, no python needed)
-    python python/tests/run_tests.py   # 33 tests (needs numpy + h5py)
+    npm test                 # node --test, 49 tests (fake bridge, no python needed)
+    python python/tests/run_tests.py   # 38 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 
 A fresh clone must run `npm install` before `npm test`; the CI workflow does this.

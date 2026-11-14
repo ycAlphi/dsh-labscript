@@ -49,6 +49,9 @@ hard limits 全部通过配置接入。
 
 postprocess 是后处理：跑完后调用配置的 Python 函数（entry + pythonPaths），
 返回 dict 供 finish 写回。旧协议里的 analysis: 字段当作 postprocess 别名。
+函数按 `analyze(run_folder, scan_global, reps, name)` 调用；签名接受时还会传
+`scan_globals=[...]`（全部扫描轴、按顺序），二维扫描因此能拿到第二轴。finish 解析到
+缺失或非数字的值不再静默丢弃，会在 labs_wait 输出里以 `finish skipped` 列出。
 
 ## 边界
 

@@ -306,3 +306,19 @@ test('labs_status shows how many shots already acquired data', () => {
   const text = plugin.tools.get('labs_status').output.render({}, value)[0].text
   assert.match(text, /h5=5\/5  executed=2  complete=false  elapsed=12s/)
 })
+
+test('labs_status names a panel field requested as a global', async () => {
+  const plugin = makePlugin()
+  const status = await plugin.tools.get('labs_status').execute({ keys: ['n_shots', 'amplitude'] }, exec)
+  const text = plugin.tools.get('labs_status').output.render({ keys: ['n_shots', 'amplitude'] }, status)[0].text
+  assert.match(text, /n_shots = 2 {2}\(panel field, not a global\)/)
+  assert.match(text, /  amplitude = 0\.5/)
+})
+
+test('labs_wait reports finish values that were not written back', async () => {
+  const plugin = makePlugin()
+  await plugin.tools.get('labs_protocol').execute({ action: 'run', protocol: 'demo_scan', note: 'cal' }, exec)
+  const waited = await plugin.tools.get('labs_wait').execute({}, exec)
+  const text = plugin.tools.get('labs_wait').output.render({}, waited)[0].text
+  assert.match(text, /finish skipped: amp <- fit\.width \(not a number \(str\)\)/)
+})

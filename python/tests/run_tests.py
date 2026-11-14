@@ -560,6 +560,178 @@ def test_doctor_mock():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_doctor_checks_labscript_without_importing_it():
+    """doctor must not import labscript: the failed import used to break the runmanager
+    checks that follow it in the same process, reporting a false negative."""
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-doctor-import-")
+    try:
+        cfg = make_config(tmp)
+        cfg["backend"] = "labscript"
+
+        class FakeClient(object):
+            def say_hello(self):
+                return True
+
+            def get_version(self):
+                return "fake-1.0"
+
+        class FakeBackend(object):
+            def __init__(self, config):
+                self.config = config
+
+            def client(self):
+                return FakeClient()
+
+            def endpoint(self):
+                return "127.0.0.1:42523 (config)"
+
+            def n_shots(self):
+                return 3
+
+            def run_shots(self):
+                return True
+
+            def error_in_globals(self):
+                return False
+
+            def shot_output_folder(self):
+                return "/tmp/runs"
+
+        original_find = bridge.importlib.util.find_spec
+        original_backend = bridge.LabscriptBackend
+        saved = sys.modules.pop("labscript", None)
+        bridge.importlib.util.find_spec = lambda name, package=None: object()
+        bridge.LabscriptBackend = FakeBackend
+        try:
+            out = bridge.cmd_doctor(cfg, {})
+            assert "labscript" not in sys.modules, "doctor imported labscript"
+        finally:
+            bridge.importlib.util.find_spec = original_find
+            bridge.LabscriptBackend = original_backend
+            if saved is not None:
+                sys.modules["labscript"] = saved
+        names = dict((check["name"], check["status"]) for check in out["checks"])
+        assert names["labscript-suite"] == "ok", names
+        assert names["runmanager"] == "ok", names
+        assert names["python-executable"] == "ok", names
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_doctor_reports_missing_modules_without_importing():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-doctor-missing-")
+    try:
+        cfg = make_config(tmp)
+        cfg["backend"] = "labscript"
+        original_find = bridge.importlib.util.find_spec
+        bridge.importlib.util.find_spec = lambda name, package=None: None
+        try:
+            out = bridge.cmd_doctor(cfg, {})
+        finally:
+            bridge.importlib.util.find_spec = original_find
+        detail = dict((check["name"], check["detail"]) for check in out["checks"])
+        assert "not installed" in detail["labscript-suite"], detail
+        assert "No module named" not in detail["labscript-suite"], detail
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_finish_reports_values_instead_of_dropping_them():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-finish-")
+    try:
+        cfg = make_config(tmp)
+        written = {}
+
+        class FakeBackend(object):
+            def set_globals(self, values, raw=False):
+                written.update(values)
+                return dict(values)
+
+        plan = {
+            "name": "demo",
+            "finish": {
+                "panel": {"duration_test_us": "fit.center", "amp": "fit.width", "flag": "fit.flag", "none": "fit.none"},
+                "history": {"demo.x": "fit.absent"},
+            },
+        }
+        result = {"fit": {"center": 2.5, "width": "abc", "flag": True, "none": None}}
+        out = bridge.apply_finish(FakeBackend(), cfg, plan, result, "/tmp/run")
+        assert written == {"duration_test_us": 2.5}, written
+        skipped = dict((item["key"], item) for item in out["skipped"])
+        assert skipped["amp"]["reason"] == "not a number (str)", skipped
+        assert skipped["flag"]["reason"] == "not a number (bool)", skipped
+        assert skipped["none"]["reason"] == "not a number (NoneType)", skipped
+        assert skipped["demo.x"]["target"] == "history", skipped
+        assert skipped["demo.x"]["reason"] == "missing", skipped
+        assert out["panel"] == {"duration_test_us": 2.5}, out
+        with open(cfg["calibrationLog"], "r", encoding="utf-8") as handle:
+            assert handle.read().strip() == "", "a skipped history value must not be logged"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_postprocess_gets_every_scan_axis():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-postprocess-axes-")
+    try:
+        cfg = make_config(tmp)
+        seen = {}
+
+        def analyze(run_folder, scan_global, reps, name, scan_globals=None):
+            seen.update({"run_folder": run_folder, "scan_global": scan_global, "reps": reps, "name": name, "scan_globals": scan_globals})
+            return {"fit": {"center": 1.0}}
+
+        module = types.ModuleType("fake_postprocess")
+        module.analyze = analyze
+        cfg["postprocess"] = {"entry": "fake_postprocess:analyze"}
+        original_import = bridge.importlib.import_module
+
+        def fake_import(name):
+            return module if name == "fake_postprocess" else original_import(name)
+
+        bridge.importlib.import_module = fake_import
+        try:
+            plan = {"name": "demo", "postprocess": "fake", "scan": {"duration_test_us": "x", "freq": "y"}}
+            result = bridge.run_postprocess(cfg, plan, "/tmp/run", ["duration_test_us", "freq"], 3)
+        finally:
+            bridge.importlib.import_module = original_import
+        assert result == {"fit": {"center": 1.0}}, result
+        assert seen["scan_globals"] == ["duration_test_us", "freq"], seen
+        assert seen["scan_global"] == "duration_test_us", seen
+        assert seen["reps"] == 3 and seen["name"] == "fake", seen
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_postprocess_keeps_supporting_a_positional_signature():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-postprocess-legacy-")
+    try:
+        cfg = make_config(tmp)
+        seen = []
+
+        def analyze(a, b, c, d):
+            seen.extend([a, b, c, d])
+            return {"fit": {"center": 1.0}}
+
+        module = types.ModuleType("legacy_postprocess")
+        module.analyze = analyze
+        cfg["postprocess"] = {"entry": "legacy_postprocess:analyze"}
+        original_import = bridge.importlib.import_module
+
+        def fake_import(name):
+            return module if name == "legacy_postprocess" else original_import(name)
+
+        bridge.importlib.import_module = fake_import
+        try:
+            plan = {"name": "legacy", "postprocess": "legacy", "scan": {"a": "x", "b": "y"}}
+            result = bridge.run_postprocess(cfg, plan, "/tmp/run", ["a", "b"], 1)
+        finally:
+            bridge.importlib.import_module = original_import
+        assert result == {"fit": {"center": 1.0}}, result
+        assert seen == ["/tmp/run", "a", 1, "legacy"], seen
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_status_maps_paths_from_runmanager():
     """labs_status must return paths the agent's machine can open."""
     tmp = tempfile.mkdtemp(prefix="dsh-labscript-py-map-")

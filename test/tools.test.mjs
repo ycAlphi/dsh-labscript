@@ -85,22 +85,27 @@ test('labs_status renders panel values on demand', async () => {
   assert.match(all, /  amplitude = 0\.5/)
 })
 
-test('labs_status shows scan axes and a panel n_shots mismatch', () => {
+test('labs_status marks scan axes as a heuristic and n_shots as authoritative', () => {
   const plugin = makePlugin()
-  const value = {
+  const base = {
     backend: 'mock-labscript',
     labscript: 'mock_sequence.py',
     shot_output_folder: '/tmp/runs',
     globals: {},
-    scan_axes: { a: 19 },
-    n_shots_from_arrays: 19,
-    n_shots: 380,
     error_in_globals: false,
     run_shots: true,
+    shuffle: true,
     panel_history: { dir: '/tmp/history', latest: null, count: 0 },
   }
-  const text = plugin.tools.get('labs_status').output.render({}, value)[0].text
-  assert.match(text, /scan axes: a=19  n_shots_from_arrays=19  \(panel n_shots=380 differs\)/)
+  const mismatch = Object.assign({}, base, { scan_axes: { pulse_shape: 3, freq: 31 }, n_shots_from_arrays: 93, n_shots: 31 })
+  const text = plugin.tools.get('labs_status').output.render({}, mismatch)[0].text
+  assert.match(text, /scan axes \(heuristic\): freq=31, pulse_shape=3  product 93 != n_shots 31: n_shots is authoritative/)
+  assert.match(text, /n_shots: 31  error_in_globals: false  run_shots: true  shuffle: true/)
+  const agreed = Object.assign({}, base, { scan_axes: { freq: 31 }, n_shots_from_arrays: 31, n_shots: 31 })
+  const agreedText = plugin.tools.get('labs_status').output.render({}, agreed)[0].text
+  assert.match(agreedText, /scan axes \(heuristic\): freq=31  product 31  n_shots 31 \(authoritative\)/)
+  const unknown = plugin.tools.get('labs_status').output.render({}, Object.assign({}, base, { shuffle: null }))[0].text
+  assert.match(unknown, /shuffle: unknown/)
 })
 
 test('tool results contain no undefined fields (lossless JSON)', async () => {

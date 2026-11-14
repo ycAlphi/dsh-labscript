@@ -27,6 +27,9 @@ hard limits 全部通过配置接入。
 - 要求：DSH >= 0.2、Node ^22.19/24；Python >= 3.9。mock 模式只要 numpy+h5py；
   真机用 labscript-suite 环境。详见 docs/INSTALL.zh.md。
 - 默认 backend 是 mock-labscript；真机必须显式配置 backend: labscript。
+- runmanager 的 host/port/timeout 可以不填：不填就读 labscript 的 labconfig
+  （`[servers]/[ports] runmanager`，端口默认 42523；`[timeouts] communication_timeout`,
+  默认 60 s），和 runmanager 自己的客户端一致；填了就以配置为准。插件页留空即走 labconfig。
 - 安装后在 DSH 插件页填 backend、python、runmanager host/port、protocolsDir；
   其余高级配置（scriptsFile、hard limits、postprocess、approval、pathMap、
   engage 的超时/早退参数）写在 profile 的 cordis.patch.yml。
@@ -62,4 +65,15 @@ postprocess 是后处理：跑完后调用配置的 Python 函数（entry + pyth
   丢弃并报 dropped_stale_pending，不再永久挡住提交；RUN_PENDING 的错误里也会写清年龄和两种出路。
 - 配了 pathMap 时 pending 记录映射后的目录（原始路径保留为 remote_run_folder），所以
   labs_wait 传映射后目录或原始目录都能对上，不会再说"run folder does not exist"。
+- **shot 数以面板 `n_shots` 为准**。工具报的 scan axes / n_shots_from_arrays 只是猜测：
+  runmanager 会把 list/array 展开成轴，但 **tuple 不展开**，而且 expansion 被设成 `none` 时
+  数组就不再是轴——这两件事从 remote 接口都看不到。两个数字不一致时按 `n_shots` 报，并说明差别。
+- `labs_status` 会显示 `shuffle`。shuffle 打开时 shot 顺序不等于轴顺序，每发参数要从该发 h5 的
+  globals 读，不要按序号推。
+- 编译报错只出现在 runmanager 的 output tab：编译器子进程把回溯写到自己的 stderr，runmanager
+  把它转到这个 Qt 界面上（内存里，不落盘），`runmanager.remote` 没有任何读取接口。所以插件只能报
+  "n 秒内没有出现 shot 文件"，并请操作员贴 output tab，不猜原因。
+- shot 文件在 sequence 开始时就写出来了；`images/`、`results/` 是执行后才写，`n_executed`
+  数的就是这个。BLACS 可能因为连接表不是实验室连接表的子集而拒收、或设备编程超时把 shot 放回队首，
+  BLACS 的 Repeat all / Repeat last 会把跑完的 shot 重跑而不新增文件——这些插件都看不到。
 

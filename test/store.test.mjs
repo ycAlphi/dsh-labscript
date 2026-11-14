@@ -21,9 +21,28 @@ function tempHome() {
 test('ui config normalizes defaults and rejects bad values', () => {
   const config = normalizeUiConfig({})
   assert.equal(config.backend, 'mock-labscript')
-  assert.equal(config.runmanager.port, 42523)
+  // host/port stay unset so the bridge can use labscript's labconfig instead of pinning
+  // the old hardcoded defaults.
+  assert.equal(config.runmanager.host, undefined)
+  assert.equal(config.runmanager.port, undefined)
   assert.throws(() => normalizeUiConfig({ backend: 'nonsense' }), /backend must be/)
   assert.throws(() => normalizeUiConfig({ runmanager: { port: 70000 } }), /port/)
+  assert.throws(() => normalizeUiConfig({ runmanager: { port: 'abc' } }), /port/)
+  const explicit = normalizeUiConfig({ runmanager: { host: 'control', port: '42523' } })
+  assert.equal(explicit.runmanager.host, 'control')
+  assert.equal(explicit.runmanager.port, 42523)
+})
+
+test('clearing the UI host/port hands the endpoint back to labconfig', () => {
+  const home = tempHome()
+  writeUiConfig({ runmanager: { host: '10.0.0.9', port: 43000 } }, home)
+  assert.equal(readUiConfig(home).config.runmanager.port, 43000)
+  writeUiConfig({ runmanager: { host: '', port: '' } }, home)
+  assert.equal(readUiConfig(home).config.runmanager.host, undefined)
+  assert.equal(readUiConfig(home).config.runmanager.port, undefined)
+  const merged = mergeConfig({ runmanager: { host: '10.0.0.9', port: 43000 } }, readUiConfig(home).config)
+  // profile value still wins over nothing, so a profile-only deployment keeps working
+  assert.equal(merged.runmanager.host, '10.0.0.9')
 })
 
 test('ui config round-trips through the DSH home directory', () => {

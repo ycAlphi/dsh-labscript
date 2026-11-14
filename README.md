@@ -40,9 +40,9 @@ config). Run `labs_doctor` first if anything looks misconfigured.
 | Tool | What it does |
 |---|---|
 | labs_doctor | Read-only configuration diagnostic: python, numpy/h5py, labscript/runmanager, paths, approval, versions. |
-| labs_status | Read the panel: labscript, globals, n_shots, error_in_globals, run_shots, pending run progress, snapshot directory |
+| labs_status | Read the panel: labscript, globals, n_shots, error_in_globals, run_shots, shuffle, pending run progress, snapshot directory |
 | labs_set | Write panel globals (or raw expressions, or the repetition counter). Snapshots the panel first. Does not run. |
-| labs_engage | Submit the current panel for a run; returns immediately with n_shots_at_submit and expected_n_shots |
+| labs_engage | Submit the current panel as one sequence (shot files to BLACS); returns immediately with n_shots_at_submit and expected_n_shots |
 | labs_wait | Wait (blocking, with timeout) for the pending run; finalizes a pending protocol: postprocess, finish write-back, restore |
 | labs_abort | Abort the current submission |
 | labs_data | Read the run folder HDF5: first-shot globals and, with scan, a per-shot table |
@@ -84,7 +84,7 @@ Add one row to your DSH profile patch (see examples/config.example.yml):
       config:
         python: /path/to/labscript-suite/python
         backend: labscript
-        runmanager: { host: 127.0.0.1, port: 42523, timeoutS: 10 }
+        # runmanager: { host: 127.0.0.1, port: 42523, timeoutS: 10 }   # optional; labconfig otherwise
         protocolsDir: /path/to/protocols
         scriptsFile: /path/to/scripts.json
         hardLimitsFile: /path/to/hard_limits.json
@@ -102,6 +102,12 @@ Add one row to your DSH profile patch (see examples/config.example.yml):
 already mapped: `labs_status`, `labs_engage`, `labs_wait`, `labs_data` and
 `labs_protocol` show local paths, while `run_folder` keeps the raw runmanager
 value next to `mapped_run_folder`.
+
+`runmanager` may be omitted: host, port and timeout then come from labscript's labconfig
+(`[servers] runmanager`, `[ports] runmanager` — default 42523 — and
+`[timeouts] communication_timeout` — default 60 s), the same way `runmanager.remote.Client`
+resolves them. Configured values override labconfig. The Plugins page leaves host/port blank
+for that reason; typing them pins them.
 
 `engage` controls how a submitted run is watched: `timeoutS` (default 900) is the
 total wait budget of one `labs_wait`, `noShotS` (default 25) makes the wait return
@@ -133,8 +139,8 @@ is not a physics simulation.
 ## Development
 
     npm install              # only runtime dependency: yaml
-    npm test                 # node --test, 46 tests (fake bridge, no python needed)
-    python python/tests/run_tests.py   # 28 tests (needs numpy + h5py)
+    npm test                 # node --test, 47 tests (fake bridge, no python needed)
+    python python/tests/run_tests.py   # 33 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 
 A fresh clone must run `npm install` before `npm test`; the CI workflow does this.
@@ -143,6 +149,20 @@ A fresh clone must run `npm install` before `npm test`; the CI workflow does thi
 
 - docs/README.zh.md - Chinese guide
 - docs/INSTALL.zh.md - local DSH profile install
+
+## Terminology
+
+The plugin uses short names; the labscript suite uses its own. Both describe the same objects,
+and the field names are unchanged:
+
+| plugin | labscript suite |
+|---|---|
+| run folder, `run_folder` | **shot output folder** (one **sequence**'s shot files) |
+| run, engage | one **sequence**: one shot file per point in the parameter space |
+| shot h5, `n_h5` | **shot file** (`.h5`) |
+| scan, scan axis | **parameter space**, **axis**, **expansion** (`none`/`outer`/zip group/`auto`) |
+| `n_executed` | shots that **acquired data** (`images/`, `results/`) |
+| postprocess | lyse **single-shot / multi-shot routine** |
 
 ## Boundaries
 
@@ -154,6 +174,23 @@ A fresh clone must run `npm install` before `npm test`; the CI workflow does thi
   count as 0/1. They are advisory configuration, not a safety interlock.
 - labs_protocol show warns when a set/scan key is missing from the currently loaded
   labscript; protocol runs ask for confirmation before proceeding on real hardware.
+- The panel's `n_shots` is the authoritative shot count. The reported scan axes and
+  `n_shots_from_arrays` are a heuristic: runmanager expands list/array globals but passes
+  tuples through unwrapped, and an expansion setting of `none` turns an array back into a
+  non-axis; neither is visible through the remote API. When the two numbers disagree,
+  `n_shots` wins and the difference is reported as such.
+- `labs_status` reports `shuffle`. With shuffle on, shot order is not axis order, so each
+  shot's parameters must be read from its own h5 globals.
+- Compilation errors appear only in runmanager's output tab. The compiler subprocess writes the
+  traceback to its stderr, which runmanager redirects to that tab (an in-memory Qt widget);
+  `runmanager.remote` has no interface for it and nothing is written to a log file. The plugin
+  therefore reports that no shot file appeared and asks for the tab to be pasted, instead of
+  guessing why compilation failed.
+- A shot file exists as soon as a sequence starts; `images/` and `results/` are written only
+  after execution, which is what `n_executed` counts. BLACS can keep a shot out of its queue
+  (its connection table must be a subset of the lab connection table) or put it back at the head
+  after a device programming timeout, and BLACS Repeat all / Repeat last re-runs completed shots
+  without creating new files; none of that is visible to the plugin.
 - Completion is detected from the run folder on the filesystem (HDF5 count,
   stable file sizes, and a readable last shot); stock labscript has no
   run-state query.

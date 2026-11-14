@@ -19,7 +19,9 @@
 #   config:
 #     python: /path/to/labscript-suite/python
 #     backend: labscript
-#     runmanager: { host: 127.0.0.1, port: 42523, timeoutS: 10 }
+#     # runmanager 可以不写：host/port/timeout 默认读 labscript 的 labconfig
+#     # （[servers]/[ports]/[timeouts]，端口默认 42523、超时默认 60 s），填了才覆盖。
+#     # runmanager: { host: 127.0.0.1, port: 42523, timeoutS: 10 }
 #     protocolsDir: /path/to/your/protocols
 #     scriptsFile: /path/to/scripts.json
 #     hardLimitsFile: /path/to/hard_limits.json

@@ -211,6 +211,28 @@ def eval_panel_value(raw):
         return str(raw)
 
 
+def axis_length(value):
+    """Length of the axis runmanager expands from this global, or None.
+
+    Heuristic: runmanager's automatic expansion turns list/array globals into axes
+    ("outer") and passes tuples through whole, so a tuple is not an axis. Expansion
+    settings (none / zip group) are not visible from runmanager.remote, so a list that
+    was switched to "none" still looks like an axis here. The panel's n_shots is the
+    authoritative shot count; this is only a hint.
+    """
+    if isinstance(value, (str, bytes, dict, tuple)):
+        return None
+    if not hasattr(value, "__len__"):
+        return None
+    ndim = getattr(value, "ndim", None)
+    if ndim is not None:
+        return int(value.size) if ndim >= 1 else None
+    try:
+        return int(len(value))
+    except Exception:
+        return None
+
+
 def raw_repr(value):
     if isinstance(value, bool):
         return "True" if value else "False"
@@ -297,17 +319,38 @@ class LabscriptBackend(object):
             from runmanager.remote import Client
         except Exception as exc:
             raise BridgeError("BACKEND_UNAVAILABLE", "labscript python environment not importable: " + str(exc))
+        # Anything left unset is resolved by runmanager.remote.Client from labscript's
+        # labconfig ([servers] runmanager, [ports] runmanager, [timeouts]
+        # communication_timeout), the same way the runmanager GUI does it. Explicit
+        # config always wins.
         rm = self.config.get("runmanager") or {}
-        host = rm.get("host") or "127.0.0.1"
-        port = int(rm.get("port") or 42523)
-        timeout = float(rm.get("timeoutS") or 10)
+        kwargs = {}
+        if rm.get("host"):
+            kwargs["host"] = rm["host"]
+        if rm.get("port"):
+            kwargs["port"] = int(rm["port"])
+        if rm.get("timeoutS"):
+            kwargs["timeout"] = float(rm["timeoutS"])
         try:
-            client = Client(host=host, port=port, timeout=timeout)
+            client = Client(**kwargs)
+        except Exception as exc:
+            raise BridgeError("BACKEND_UNAVAILABLE", "cannot create a runmanager client: " + type(exc).__name__ + ": " + str(exc))
+        try:
             client.say_hello()
         except Exception as exc:
-            raise BridgeError("BACKEND_UNAVAILABLE", "runmanager not reachable at " + host + ":" + str(port) + ": " + str(exc))
+            raise BridgeError("BACKEND_UNAVAILABLE", "runmanager not reachable at " + str(getattr(client, "host", "?")) + ":" + str(getattr(client, "port", "?")) + ": " + str(exc))
         self._client = client
         return client
+
+    def endpoint(self):
+        """Where this client points, and whether the values came from config or labconfig."""
+        rm = self.config.get("runmanager") or {}
+        source = "config" if (rm.get("host") or rm.get("port")) else "labconfig"
+        try:
+            client = self.client()
+            return str(client.host) + ":" + str(client.port) + " (" + source + ", timeout " + str(client.timeout) + "s)"
+        except Exception as exc:
+            return "<unknown> (" + source + "): " + str(exc)
 
     def version(self):
         try:
@@ -334,6 +377,13 @@ class LabscriptBackend(object):
     def run_shots(self):
         try:
             return bool(self.client().get_run_shots())
+        except Exception:
+            return None
+
+    def shuffle(self):
+        # Older runmanager versions have no get_shuffle; report unknown instead of failing.
+        try:
+            return bool(self.client().get_shuffle())
         except Exception:
             return None
 
@@ -415,7 +465,9 @@ class MockBackend(object):
         panel = self.read_panel()
         if raw:
             return dict(panel)
-        return dict((k, jsonable(eval_panel_value(v))) for k, v in panel.items())
+        # Keep Python types (tuple vs list matters to the expansion rules); callers
+        # jsonable() values before they leave the bridge.
+        return dict((k, eval_panel_value(v)) for k, v in panel.items())
 
     def set_globals(self, values, raw=False):
         panel = self.read_panel()
@@ -425,17 +477,21 @@ class MockBackend(object):
         return dict((k, panel[k]) for k in values)
 
     def n_shots(self):
-        import numpy as np
         total = 1
         for value in self.get_globals(raw=False).values():
-            arr = np.asarray(value) if hasattr(value, "__len__") and not isinstance(value, str) else None
-            if arr is None or arr.ndim == 0:
+            length = axis_length(value)
+            if length is None or length <= 0:
                 continue
-            total *= max(1, int(arr.size))
+            total *= length
         return int(total)
 
     def error_in_globals(self):
-        return False
+        # Simulator switch: mock.errorInGlobals makes the mock panel report an evaluation
+        # error, so the GLOBALS_ERROR refusal path can be tested without real hardware.
+        return bool((self.config.get("mock") or {}).get("errorInGlobals"))
+
+    def shuffle(self):
+        return bool((self.config.get("mock") or {}).get("shuffle"))
 
     def run_shots(self):
         return True
@@ -452,11 +508,8 @@ class MockBackend(object):
         values = self.get_globals(raw=False)
         arrays = {}
         for key, value in values.items():
-            if isinstance(value, str):
-                continue
-            arr = np.asarray(value)
-            if arr.ndim >= 1 and arr.size > 1:
-                arrays[key] = arr
+            if (axis_length(value) or 0) > 1:
+                arrays[key] = np.asarray(value).ravel()
         total = 1
         for arr in arrays.values():
             total *= int(arr.size)
@@ -564,6 +617,10 @@ class HttpSimBackend(object):
 
     def run_shots(self):
         return True
+
+    def shuffle(self):
+        snap = self.snapshot()
+        return bool(snap.get("shuffle")) if "shuffle" in snap else None
 
     def labscript_file(self):
         return self.snapshot().get("labscript_file")
@@ -948,13 +1005,8 @@ def cmd_status(config, args):
     scan_axes = {}
     n_shots_from_arrays = 1
     for name, value in panel_values.items():
-        if isinstance(value, str) or not hasattr(value, "__len__"):
-            continue
-        try:
-            size = int(len(value))
-        except Exception:
-            continue
-        if size <= 1:
+        size = axis_length(value)
+        if size is None or size <= 1:
             continue
         scan_axes[str(name)] = size
         n_shots_from_arrays *= size
@@ -973,6 +1025,7 @@ def cmd_status(config, args):
         "n_shots": backend.n_shots(),
         "error_in_globals": backend.error_in_globals(),
         "run_shots": backend.run_shots(),
+        "shuffle": backend.shuffle() if hasattr(backend, "shuffle") else None,
         "panel_history": panel_history_info(config),
     }
     if raw:
@@ -1123,7 +1176,12 @@ def wait_for_run(config, run_folder, expected, timeout_s):
             if stable_since is None:
                 stable_since = time.time()
             elif time.time() - stable_since >= settle:
-                return result(True, False, "complete", time.time() - start)
+                hint = None
+                if want and len(shots) != want:
+                    hint = ("finished with " + str(len(shots)) + " shot files for expected_n_shots=" + str(want) +
+                            ": the panel's n_shots changed after submit, or shots were re-run (BLACS Repeat all / "
+                            "Repeat last re-executes existing shot files and does not create new ones).")
+                return result(True, False, "complete", time.time() - start, hint)
         else:
             stable_since = None
             if ready and executed is False:
@@ -1132,8 +1190,11 @@ def wait_for_run(config, run_folder, expected, timeout_s):
                 elif time.time() - compiled_since >= stall:
                     return result(
                         False, False, "compiled_not_executed", time.time() - start,
-                        "shots were compiled but show no acquisition data after " + str(int(stall)) +
-                        " s: BLACS may be paused / the queue may not be running, or the run is still being programmed. Check BLACS and the panel, then labs_abort if needed.")
+                        "shot files exist but show no acquisition data after " + str(int(stall)) + " s: BLACS may be "
+                        "paused, or it kept the shot out of the queue (its connection table must be a subset of the "
+                        "lab connection table) or a device group failed to program within 5 minutes (the queue then "
+                        "pauses and puts that shot back at its head), or the run is still being programmed. Check the "
+                        "BLACS GUI and the panel, then labs_abort if needed.")
             else:
                 compiled_since = None
         last_count = count
@@ -1160,7 +1221,9 @@ def wait_for_run(config, run_folder, expected, timeout_s):
                 hint = "only " + str(count) + " of " + str(expected) + " shots appeared before the timeout; the run may still be compiling or blocked."
             elif executed is False:
                 diagnosis = "compiled_not_executed"
-                hint = "shots were compiled but no acquisition data was found: BLACS may be paused or not executing the queue."
+                hint = ("shot files exist but no acquisition data was found: BLACS may be paused, may have refused the "
+                        "shot (connection table not a subset of the lab connection table) or re-queued it after a device "
+                        "programming timeout. Check the BLACS GUI.")
             else:
                 diagnosis = "partial"
                 hint = "shots appeared but the run was not confirmed complete before the timeout."
@@ -1512,7 +1575,7 @@ def cmd_doctor(config, args):
             probe = LabscriptBackend(config)
             client = probe.client()
             version = client.get_version() if hasattr(client, "get_version") else "unknown"
-            _add_check(checks, "runmanager", "ok", str(version))
+            _add_check(checks, "runmanager", "ok", str(version) + " at " + probe.endpoint())
             try:
                 _add_check(checks, "panel", "ok", "n_shots=" + str(probe.n_shots()) + ", run_shots=" + str(probe.run_shots()) + ", error_in_globals=" + str(probe.error_in_globals()))
             except Exception as exc:

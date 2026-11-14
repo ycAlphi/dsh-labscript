@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.3.0
+
+Implements the upstream request written from the field (labscript-suite workflow terms and
+`runmanager.remote` limits). No output field is renamed or removed.
+
+- `n_shots` is now documented and rendered as the authoritative shot count. The scan-axes line is
+  labelled a heuristic: runmanager expands list/array globals but passes tuples through, and an
+  expansion setting of `none` turns an array into a non-axis; neither is visible through
+  `runmanager.remote`. A mismatch now reads "n_shots is authoritative (a tuple global or an
+  expansion setting of none is not an axis)" instead of printing two numbers with no verdict. The
+  bridge's axis guess ignores tuples and dicts, and the mock backend follows the same rule (it used
+  to multiply tuples in, pinning the wrong semantics into the tests).
+- Skill and tool descriptions no longer tell the agent to "read the runmanager output": compilation
+  errors appear only in runmanager's output tab (the compiler subprocess writes its traceback to
+  stderr and runmanager redirects it to an in-memory Qt widget), so the instruction is now to say
+  that no shot file appeared, ask the operator to paste the tab, and not guess the cause.
+  `labs_set` also warns that a global name must not shadow a Python builtin or a
+  `from labscript import *` name: runmanager accepts it and labscript fails at compile time.
+- `compiled_not_executed` explains the other official causes: BLACS may keep a shot out of its
+  queue (the shot's connection table must be a subset of the lab connection table) or put it back
+  at the head after a device programming timeout; all of that is visible only in the BLACS GUI.
+  More shot files than expected now points at a changed panel or BLACS Repeat all / Repeat last,
+  which re-runs completed shots without creating new files.
+- `labs_status` reports `shuffle` (from `get_shuffle`; "unknown" when that runmanager version has
+  no such method). With shuffle on, shot order is not axis order: read each shot's parameters from
+  its own h5 globals.
+- runmanager host/port/timeout default to labscript's labconfig when unset, resolved by
+  `runmanager.remote.Client` itself (`[servers]/[ports]/[timeouts]`, port 42523, timeout 60 s);
+  configured values still win. The Plugins page now leaves host/port blank for that reason, and
+  clearing them hands the endpoint back to labconfig. `labs_doctor` prints the effective endpoint
+  and whether it came from config or labconfig.
+- mock backend: `mock.errorInGlobals` makes `error_in_globals` true so the engagement refusal can
+  be tested, and `mock.shuffle` sets the reported shuffle flag.
+- Docs: a terminology table maps the plugin's short names to the suite's (shot output folder,
+  sequence, shot file, parameter space/axes, acquired data) without renaming fields.
+- Compilation logs stay out of scope: nothing about a compilation failure is written anywhere
+  readable (see README), so no `labs_compile_log` was added; a guessed diagnosis would be worse
+  than none.
+- Tests: 33 python + 47 node (axis heuristic with tuples/dicts, mock error/shuffle switches,
+  labconfig client defaults, extra shot files, scan/shuffle rendering, endpoint clearing).
+
 ## 0.2.8
 
 Fixes from a real labscript-suite session (2026-11-14, 145 tool calls, no run submitted by the

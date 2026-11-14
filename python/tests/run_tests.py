@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import time
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -274,6 +275,120 @@ def test_wait_diagnosis_compiled_not_executed():
         assert result["complete"] is False, result
         assert result["diagnosis"] == "compiled_not_executed", result
         assert result["executed"] is False, result
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_axis_heuristic_ignores_tuples_and_dicts():
+    """runmanager does not expand tuples, so the scan-axes hint must not count them."""
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-axis-")
+    try:
+        cfg = make_config(tmp)
+        out = bridge.cmd_set(cfg, {"values": {"pulse_shape": "(0.1, 0.2, 0.3)"}, "raw": True})
+        assert out["missing"] == [], out
+        status = bridge.cmd_status(cfg, {})
+        assert "pulse_shape" not in status["scan_axes"], status["scan_axes"]
+        assert status["n_shots"] == 1, status["n_shots"]
+        assert status["n_shots_from_arrays"] == 1, status["n_shots_from_arrays"]
+        # a list/array global is an axis, a dict is not
+        bridge.cmd_set(cfg, {"values": {"freq": "np.arange(0.5, 6.7, 0.2)", "shape": "{'a': 1, 'b': 2}"}, "raw": True})
+        status = bridge.cmd_status(cfg, {})
+        assert status["scan_axes"].get("freq") == 31, status["scan_axes"]
+        assert "shape" not in status["scan_axes"], status["scan_axes"]
+        assert status["n_shots"] == 31, status["n_shots"]
+        assert status["n_shots_from_arrays"] == 31, status["n_shots_from_arrays"]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_mock_error_in_globals_blocks_engage():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-mock-error-")
+    try:
+        cfg = make_config(tmp)
+        assert bridge.cmd_status(cfg, {})["error_in_globals"] is False
+        cfg["mock"]["errorInGlobals"] = True
+        assert bridge.cmd_status(cfg, {})["error_in_globals"] is True
+        try:
+            bridge.cmd_engage(cfg, {})
+        except bridge.BridgeError as exc:
+            assert exc.code == "GLOBALS_ERROR", exc.code
+        else:
+            raise AssertionError("expected GLOBALS_ERROR")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_mock_reports_shuffle():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-mock-shuffle-")
+    try:
+        cfg = make_config(tmp)
+        assert bridge.cmd_status(cfg, {})["shuffle"] is False
+        cfg["mock"]["shuffle"] = True
+        assert bridge.cmd_status(cfg, {})["shuffle"] is True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_real_client_uses_labconfig_defaults():
+    """Unset host/port/timeout must be resolved by runmanager.remote from labconfig."""
+    class FakeClient(object):
+        last = None
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.host = kwargs.get("host") or "localhost"
+            self.port = kwargs.get("port") or 42523
+            self.timeout = kwargs.get("timeout") or 60
+            FakeClient.last = self
+
+        def say_hello(self):
+            return "hello"
+
+        def get_shuffle(self):
+            return True
+
+    class NoShuffleClient(FakeClient):
+        def get_shuffle(self):
+            raise AttributeError("get_shuffle")
+
+    fake_remote = types.ModuleType("runmanager.remote")
+    fake_remote.Client = FakeClient
+    fake_package = types.ModuleType("runmanager")
+    fake_package.remote = fake_remote
+    saved = dict((name, sys.modules.get(name)) for name in ("runmanager", "runmanager.remote"))
+    sys.modules["runmanager"] = fake_package
+    sys.modules["runmanager.remote"] = fake_remote
+    try:
+        bare = bridge.LabscriptBackend({})
+        client = bare.client()
+        assert client.kwargs == {}, client.kwargs
+        assert bare.shuffle() is True
+        explicit = bridge.LabscriptBackend({"runmanager": {"host": "10.0.0.5", "port": 43000, "timeoutS": 25}})
+        assert explicit.client().kwargs == {"host": "10.0.0.5", "port": 43000, "timeout": 25.0}
+        assert "10.0.0.5" in explicit.endpoint() and "config" in explicit.endpoint()
+        fake_remote.Client = NoShuffleClient
+        assert bridge.LabscriptBackend({}).shuffle() is None
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+def test_wait_reports_extra_shot_files():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-extra-shots-")
+    try:
+        cfg = make_config(tmp)
+        cfg["engage"] = {"timeoutS": 5, "pollS": 0.05, "settleS": 0.1}
+        run_dir = os.path.join(tmp, "extra_run")
+        os.makedirs(run_dir, exist_ok=True)
+        for index in range(4):
+            write_shot(os.path.join(run_dir, "shot_000%d.h5" % index), executed=True)
+        result = bridge.wait_for_run(cfg, run_dir, 2, 4)
+        assert result["complete"] is True, result
+        assert result["n_h5"] == 4, result
+        assert "Repeat all" in result["hint"], result
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

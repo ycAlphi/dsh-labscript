@@ -48,7 +48,7 @@ if (mode === 'hang') {
 
 function answer(cmd, args) {
   if (cmd === 'status') {
-    return { backend: 'mock-labscript', labscript: 'mock_sequence.py', shot_output_folder: '/tmp/runs', globals: { amplitude: 0.5 }, n_shots: 2, error_in_globals: false, run_shots: true, panel_history: { dir: '/tmp/history', latest: null, count: 0 } }
+    return { backend: 'mock-labscript', labscript: 'mock_sequence.py', shot_output_folder: '/tmp/runs', globals: { amplitude: 0.5 }, n_shots: 2, error_in_globals: false, run_shots: true, shuffle: false, panel_history: { dir: '/tmp/history', latest: null, count: 0 } }
   }
   if (cmd === 'set') {
     return { written: args.values || {}, readback: args.values || {}, missing: [], n_shots: 2, error_in_globals: false, snapshot: { name: 'snap-1.json', file: '/tmp/history/snap-1.json', dir: '/tmp/history' } }

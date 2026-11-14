@@ -76,7 +76,7 @@ function answer(cmd, args) {
       globals = {}
       for (const key of keys) if (key in allGlobals) globals[key] = allGlobals[key]
     }
-    const res = { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), n_h5: 2, globals }
+    const res = { run_folder: args.run_folder, mapped_run_folder: mappedRun(args.run_folder), n_h5: 2, n_executed: 1, globals, expansion: { axes: [{ kind: 'outer', name: 'dummy_iterator', n: 3 }, { kind: 'zip', name: 'zip_1', members: ['freq', 'duration'], n: 50 }], n_shots: 150 } }
     if (args.results) res.results_layout = { lyse: ['a', 'b'], fit: ['c'] }
     if (args.scan) {
       const table = { scan: args.scan, n_points: 2, axis: { points: 2, min: 0, max: 1, step: 1 }, columns: ['fit.c', 'lyse.a'] }
@@ -92,7 +92,7 @@ function answer(cmd, args) {
   }
   if (cmd === 'restore') return { restored_from: { file: '/tmp/history/snap-1.json', ts: 't' }, written: {}, readback: {} }
   if (cmd === 'doctor') return { checks: [{ name: 'numpy', status: 'ok', detail: '2.2.5' }, { name: 'h5py', status: 'ok', detail: '3.13.0' }], backend: 'mock-labscript', python: '3.11.0' }
-  if (cmd === 'protocol_plan') return { plan: { name: 'demo_scan', expected_n_shots: 2, reps: 1, scan: { duration_test_us: { expr: 'np.linspace(0, 1, 2)', n: 2 } } }, hard_limits: { checked: false, warning: 'hardLimitsFile not configured' }, name_check: { checked: true, script: 'mock_sequence.py', missing: ['old_duration_key'], suggestions: { old_duration_key: ['duration_test_us'] } }, warnings: [] }
+  if (cmd === 'protocol_plan') return { plan: { name: 'demo_scan', expected_n_shots: 2, reps: 1, postprocess: 'demo.peaks', finish: { restore: true, panel: { duration_test_us: 'fit.center' }, history: { 'demo.peaks.center_us': 'fit.center' } }, scan: { duration_test_us: { expr: 'np.linspace(0, 1, 2)', n: 2 } } }, hard_limits: { checked: false, warning: 'hardLimitsFile not configured' }, name_check: { checked: true, script: 'mock_sequence.py', missing: ['old_duration_key'], suggestions: { old_duration_key: ['duration_test_us'] } }, warnings: [] }
   if (cmd === 'protocol_start') return { plan: { name: 'demo_scan', expected_n_shots: 2 }, snapshot: { name: 'snap-2.json', file: '/tmp/history/snap-2.json' }, steps: {}, engage: { accepted: true, run_folder: '/tmp/runs/run_000002', mapped_run_folder: '/mnt/lab/runs/run_000002', n_shots_at_submit: 2 }, n_shots_at_submit: 2, expected_n_shots: 2, submitted_at: submittedAt() }
   if (cmd === 'protocol_finalize') return { run_folder: args.run_folder, postprocess: { fit: { center: 2.5 } }, finish: { panel: { duration_test_us: 2.5 }, skipped: [{ target: 'panel', key: 'amp', dotted: 'fit.width', reason: 'not a number (str)' }] }, restore: { restored: true } }
   return { unknown: cmd }

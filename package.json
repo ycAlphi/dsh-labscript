@@ -1,6 +1,6 @@
 {
   "name": "dsh-labscript",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Control labscript-suite experiments from DeepSeek Harness: runmanager globals and scans, submits and waits, YAML fixed-operation protocols with postprocess write-back, panel snapshots, a built-in mock backend and a read-only doctor.",
   "type": "module",
   "main": "lib/index.js",

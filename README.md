@@ -9,7 +9,7 @@ files. It does not require any custom BLACS/lyse patch. Everything lab-specific
 
 ## Status
 
-v0.3.3. The mock-labscript backend, the protocol/postprocess flow and the
+v0.3.4. The mock-labscript backend, the protocol/postprocess flow and the
 snapshot/diagnosis behaviour are covered by node and python tests. A client
 configuration page (Plugins page) and a read-only `labs_doctor` are included. The real
 labscript backend is implemented against the stock runmanager remote API but has
@@ -45,8 +45,8 @@ config). Run `labs_doctor` first if anything looks misconfigured.
 | labs_engage | Submit the current panel as one sequence (shot files to BLACS); returns immediately with n_shots_at_submit and expected_n_shots |
 | labs_wait | Wait (blocking, with timeout) for the pending run; finalizes a pending protocol: postprocess, finish write-back, restore |
 | labs_abort | Abort the current submission |
-| labs_data | Read the run folder HDF5: first-shot globals and, with scan, a per-shot table |
-| labs_protocol | list / show / run YAML fixed-operation protocols |
+| labs_data | Read the run folder HDF5: first-shot globals, executed vs shot-file count, the real expansion structure (outer/zip axes) and, with scan, a per-shot table |
+| labs_protocol | list / show / run YAML fixed-operation protocols; show prints the postprocess and finish write-back plan before the run |
 | labs_restore | Restore the panel from the latest snapshot taken before a write |
 
 A runtime skill named labscript carries the workflow rules (status first, fixed
@@ -145,8 +145,8 @@ is not a physics simulation.
 ## Development
 
     npm install              # only runtime dependency: yaml
-    npm test                 # node --test, 49 tests (fake bridge, no python needed)
-    python python/tests/run_tests.py   # 38 tests (needs numpy + h5py)
+    npm test                 # node --test, 51 tests (fake bridge, no python needed)
+    python python/tests/run_tests.py   # 41 tests (needs numpy + h5py)
     LABSCRIPT_PYTHON=/path/to/python3 node scripts/demo.mjs   # end-to-end mock demo
 
 A fresh clone must run `npm install` before `npm test`; the CI workflow does this.

@@ -322,3 +322,19 @@ test('labs_wait reports finish values that were not written back', async () => {
   const text = plugin.tools.get('labs_wait').output.render({}, waited)[0].text
   assert.match(text, /finish skipped: amp <- fit\.width \(not a number \(str\)\)/)
 })
+
+test('labs_data renders the executed count and the real expansion structure', async () => {
+  const plugin = makePlugin()
+  const data = await plugin.tools.get('labs_data').execute({ run_folder: '/tmp/runs/run_000001' }, exec)
+  const text = plugin.tools.get('labs_data').output.render({}, data)[0].text
+  assert.match(text, /h5: 2, executed: 1/)
+  assert.match(text, /axes: dummy_iterator\(outer, 3\) x \[freq, duration\]\(zip, 50\) = 150/)
+})
+
+test('labs_protocol show prints the postprocess and finish plan', async () => {
+  const plugin = makePlugin()
+  const show = await plugin.tools.get('labs_protocol').execute({ action: 'show', protocol: 'demo_scan' }, exec)
+  const text = plugin.tools.get('labs_protocol').output.render({ action: 'show' }, show)[0].text
+  assert.match(text, /postprocess: demo\.peaks/)
+  assert.match(text, /finish: panel duration_test_us<-fit\.center  history demo\.peaks\.center_us<-fit\.center  restore yes/)
+})

@@ -15,7 +15,7 @@ hard limits 全部通过配置接入。
 | labs_engage | 提交当前面板，立即返回 n_shots_at_submit 与 expected_n_shots |
 | labs_wait | 等待 pending run（可超时）；若是协议则收尾：postprocess → finish 写回 → restore |
 | labs_abort | 中止当前提交（不排队，不会被 labs_wait 堵住） |
-| labs_data | 读 run 目录 HDF5：首发 globals、按扫描轴的逐发表格 |
+| labs_data | 读 run 目录 HDF5：首发 globals、executed/h5 计数、真实扩展结构（outer/zip 轴）、按扫描轴的逐发表格 |
 | labs_protocol | list / show / run YAML 固定操作协议 |
 | labs_restore | 用最近一次写前快照恢复面板（默认只恢复该次写过的键） |
 
@@ -46,6 +46,9 @@ hard limits 全部通过配置接入。
       restore: true
       panel:  { duration_test_us: fit.center }
       history: { demo.peaks.center_us: fit.center }
+
+labs_protocol show 在跑之前打印写回计划：postprocess 标签与解析后的 entry、
+finish 的 panel/history 目标与 restore 开关。
 
 postprocess 是后处理：跑完后调用配置的 Python 函数（entry + pythonPaths），
 返回 dict 供 finish 写回。旧协议里的 analysis: 字段当作 postprocess 别名。

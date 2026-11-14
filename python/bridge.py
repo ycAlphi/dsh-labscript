@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import sys
+import subprocess
 import time
 import datetime
 import importlib
@@ -132,6 +133,57 @@ def executed_prefix(shots):
         else:
             high = middle
     return low
+
+
+def globals_expansion(handle):
+    """Real scan structure from a shot file.
+
+    runmanager writes, inside each globals group, an 'expansion' group whose attrs map
+    a global name to 'outer' or to a zip group name; the group's own attrs hold the
+    values of the sequence global, whose length is the axis length. Every other source
+    is a guess: the panel shows arrays, and two 50-point globals may be one zip axis.
+    """
+    import h5py
+    try:
+        globals_group = handle["globals"]
+    except Exception:
+        return None
+    outer = []
+    zips = {}
+
+    def visit(name, obj):
+        if name.split("/")[-1] != "expansion" or not isinstance(obj, h5py.Group):
+            return
+        group = obj.parent
+        for key, raw in dict(obj.attrs).items():
+            kind = raw.decode() if isinstance(raw, bytes) else str(raw)
+            if not kind:
+                continue
+            size = 1
+            if group is not None and key in group.attrs:
+                value = group.attrs[key]
+                if hasattr(value, "size") and not isinstance(value, (str, bytes)):
+                    size = int(value.size) or 1
+            if kind == "outer":
+                outer.append({"kind": "outer", "name": str(key), "n": size})
+                continue
+            entry = zips.get(kind)
+            if entry is None:
+                entry = {"kind": "zip", "name": kind, "members": [], "n": size}
+                zips[kind] = entry
+            entry["members"].append(str(key))
+
+    try:
+        globals_group.visititems(visit)
+    except Exception:
+        return None
+    axes = outer + list(zips.values())
+    if not axes:
+        return None
+    total = 1
+    for axis in axes:
+        total *= int(axis.get("n") or 1)
+    return {"axes": axes, "n_shots": total}
 
 # ---------------------------------------------------------------- scan expr
 
@@ -1254,6 +1306,8 @@ def cmd_data(config, args):
         })
     shots = sorted(glob.glob(os.path.join(folder, "**", "*.h5"), recursive=True))
     out = {"run_folder": run_folder, "mapped_run_folder": folder, "n_h5": len(shots)}
+    if shots:
+        out["n_executed"] = executed_prefix(shots)
     if not shots:
         out["empty"] = True
         return out
@@ -1275,6 +1329,9 @@ def cmd_data(config, args):
                     if isinstance(group, h5py.Group):
                         layout[group_name] = sorted(list(group.keys()) + list(group.attrs.keys()))
             out["results_layout"] = layout
+        expansion = globals_expansion(handle)
+        if expansion:
+            out["expansion"] = expansion
     if scan:
         rows = []
         for path in shots:
@@ -1466,6 +1523,57 @@ def _add_check(checks, name, status, detail, hint=""):
     checks.append({"name": name, "status": status, "detail": str(detail), "hint": hint})
 
 
+def probe_child(config):
+    """Run cmd_probe in a child interpreter and return its data.
+
+    Importing labscript_utils installs a process-wide import hook (its double-import
+    denier), and labs_doctor has already imported h5py by the time it asks for the
+    panel; in-process imports after that fail with a misleading KeyError. Every tool
+    call already runs in its own process, so probing there reports the environment the
+    tools actually use.
+    """
+    request = json.dumps({"cmd": "probe", "config": config, "args": {}}, ensure_ascii=False)
+    timeout = 15 + float((config.get("runmanager") or {}).get("timeoutS") or 60)
+    try:
+        proc = subprocess.run(
+            [sys.executable, os.path.abspath(__file__)],
+            input=request.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        raise BridgeError("BACKEND_UNAVAILABLE", "child probe did not run: " + type(exc).__name__ + ": " + str(exc))
+    try:
+        payload = json.loads(proc.stdout.decode("utf-8", "replace").strip() or "{}")
+    except Exception:
+        tail = proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:]
+        raise BridgeError("BACKEND_UNAVAILABLE", "child probe printed no JSON" + (": " + tail[0] if tail else ""))
+    if not payload.get("ok"):
+        error = payload.get("error") or {}
+        raise BridgeError(str(error.get("code") or "BACKEND_UNAVAILABLE"), str(error.get("message") or "child probe failed"))
+    return payload.get("data") or {}
+
+
+def cmd_probe(config, args):
+    """Panel facts for labs_doctor; labs_doctor runs this in a child process."""
+    backend = make_backend(config)
+    if not isinstance(backend, LabscriptBackend):
+        status = cmd_status(config, {})
+        return {"backend": config.get("backend"), "n_shots": status.get("n_shots"), "labscript": status.get("labscript")}
+    client = backend.client()
+    version = client.get_version() if hasattr(client, "get_version") else "unknown"
+    return {
+        "backend": config.get("backend"),
+        "version": str(version),
+        "endpoint": backend.endpoint(),
+        "n_shots": backend.n_shots(),
+        "run_shots": backend.run_shots(),
+        "error_in_globals": backend.error_in_globals(),
+        "shot_output_folder": backend.shot_output_folder(),
+    }
+
+
 def cmd_doctor(config, args):
     """Read-only environment/config diagnostic (no panel writes, no engage)."""
     checks = []
@@ -1503,20 +1611,12 @@ def cmd_doctor(config, args):
         else:
             _add_check(checks, "labscript-suite", "ok", "labscript / runmanager / labscript_utils / zprocess installed")
         try:
-            probe = LabscriptBackend(config)
-            client = probe.client()
-            version = client.get_version() if hasattr(client, "get_version") else "unknown"
-            _add_check(checks, "runmanager", "ok", str(version) + " at " + probe.endpoint())
-            try:
-                _add_check(checks, "panel", "ok", "n_shots=" + str(probe.n_shots()) + ", run_shots=" + str(probe.run_shots()) + ", error_in_globals=" + str(probe.error_in_globals()))
-            except Exception as exc:
-                _add_check(checks, "panel", "warn", str(exc), "runmanager connected but the panel read failed")
-            try:
-                _add_check(checks, "shot-output", "ok", str(probe.shot_output_folder()))
-            except Exception as exc:
-                _add_check(checks, "shot-output", "warn", str(exc), "cannot resolve the shot output folder")
+            data = probe_child(config)
+            _add_check(checks, "runmanager", "ok", str(data.get("version")) + " at " + str(data.get("endpoint")))
+            _add_check(checks, "panel", "ok", "n_shots=" + str(data.get("n_shots")) + ", run_shots=" + str(data.get("run_shots")) + ", error_in_globals=" + str(data.get("error_in_globals")))
+            _add_check(checks, "shot-output", "ok", str(data.get("shot_output_folder")))
         except Exception as exc:
-            _add_check(checks, "runmanager", "fail", str(exc), "check runmanager host/port and the zprocess shared secret in labconfig")
+            _add_check(checks, "runmanager", "fail", type(exc).__name__ + ": " + str(exc), "check runmanager host/port and the zprocess shared secret in labconfig")
     else:
         try:
             probe = make_backend(config)
@@ -1582,6 +1682,7 @@ HANDLERS = {
     "protocol_start": cmd_protocol_start,
     "protocol_finalize": cmd_protocol_finalize,
     "doctor": cmd_doctor,
+    "probe": cmd_probe,
 }
 
 

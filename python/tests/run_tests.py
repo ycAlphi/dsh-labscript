@@ -568,51 +568,25 @@ def test_doctor_checks_labscript_without_importing_it():
         cfg = make_config(tmp)
         cfg["backend"] = "labscript"
 
-        class FakeClient(object):
-            def say_hello(self):
-                return True
-
-            def get_version(self):
-                return "fake-1.0"
-
-        class FakeBackend(object):
-            def __init__(self, config):
-                self.config = config
-
-            def client(self):
-                return FakeClient()
-
-            def endpoint(self):
-                return "127.0.0.1:42523 (config)"
-
-            def n_shots(self):
-                return 3
-
-            def run_shots(self):
-                return True
-
-            def error_in_globals(self):
-                return False
-
-            def shot_output_folder(self):
-                return "/tmp/runs"
+        class Proc(object):
+            stdout = json.dumps({"ok": False, "error": {"code": "BACKEND_UNAVAILABLE", "message": "canned"}}).encode("utf-8")
+            stderr = b""
 
         original_find = bridge.importlib.util.find_spec
-        original_backend = bridge.LabscriptBackend
+        original_run = bridge.subprocess.run
         saved = sys.modules.pop("labscript", None)
         bridge.importlib.util.find_spec = lambda name, package=None: object()
-        bridge.LabscriptBackend = FakeBackend
+        bridge.subprocess.run = lambda *args, **kwargs: Proc()
         try:
             out = bridge.cmd_doctor(cfg, {})
             assert "labscript" not in sys.modules, "doctor imported labscript"
         finally:
             bridge.importlib.util.find_spec = original_find
-            bridge.LabscriptBackend = original_backend
+            bridge.subprocess.run = original_run
             if saved is not None:
                 sys.modules["labscript"] = saved
         names = dict((check["name"], check["status"]) for check in out["checks"])
         assert names["labscript-suite"] == "ok", names
-        assert names["runmanager"] == "ok", names
         assert names["python-executable"] == "ok", names
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -728,6 +702,111 @@ def test_postprocess_keeps_supporting_a_positional_signature():
             bridge.importlib.import_module = original_import
         assert result == {"fit": {"center": 1.0}}, result
         assert seen == ["/tmp/run", "a", 1, "legacy"], seen
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_doctor_probes_runmanager_in_a_child_process():
+    """Importing labscript_utils poisons later imports in the same process, so the
+    doctor probe must run in a child interpreter, like every tool call does."""
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-doctor-child-")
+    try:
+        cfg = make_config(tmp)
+        cfg["backend"] = "labscript"
+        payload = {
+            "ok": True,
+            "data": {
+                "backend": "labscript",
+                "version": "3.3.1",
+                "endpoint": "control:42523 (labconfig)",
+                "n_shots": 150,
+                "run_shots": True,
+                "error_in_globals": False,
+                "shot_output_folder": "/tmp/runs",
+            },
+        }
+
+        class Proc(object):
+            stdout = json.dumps(payload).encode("utf-8")
+            stderr = b""
+
+        seen = {}
+
+        def fake_run(args, **kwargs):
+            seen["args"] = args
+            seen["input"] = kwargs.get("input")
+            return Proc()
+
+        original_run = bridge.subprocess.run
+        original_find = bridge.importlib.util.find_spec
+        original_backend = bridge.LabscriptBackend
+
+        class Explode(object):
+            def __init__(self, config):
+                raise AssertionError("doctor probed runmanager in-process")
+
+        bridge.subprocess.run = fake_run
+        bridge.importlib.util.find_spec = lambda name, package=None: object()
+        bridge.LabscriptBackend = Explode
+        try:
+            out = bridge.cmd_doctor(cfg, {})
+        finally:
+            bridge.subprocess.run = original_run
+            bridge.importlib.util.find_spec = original_find
+            bridge.LabscriptBackend = original_backend
+        checks = dict((check["name"], check) for check in out["checks"])
+        assert checks["runmanager"]["status"] == "ok", checks
+        assert "3.3.1" in checks["runmanager"]["detail"], checks
+        assert checks["panel"]["status"] == "ok", checks
+        assert checks["panel"]["detail"].startswith("n_shots=150"), checks
+        assert seen["args"][0] == sys.executable, seen
+        assert b'"probe"' in seen["input"], seen
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_data_reports_executed_shots():
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-data-executed-")
+    try:
+        cfg = make_config(tmp)
+        run_dir = os.path.join(tmp, "run")
+        os.makedirs(run_dir, exist_ok=True)
+        for index, executed in enumerate([True, True, False]):
+            write_shot(os.path.join(run_dir, "shot_000%d.h5" % index), executed=executed)
+        out = bridge.cmd_data(cfg, {"run_folder": run_dir})
+        assert out["n_h5"] == 3, out
+        assert out["n_executed"] == 2, out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_data_reports_the_real_expansion_structure():
+    import h5py
+    import numpy as np
+    tmp = tempfile.mkdtemp(prefix="dsh-labscript-data-expansion-")
+    try:
+        cfg = make_config(tmp)
+        run_dir = os.path.join(tmp, "run")
+        os.makedirs(run_dir, exist_ok=True)
+        with h5py.File(os.path.join(run_dir, "shot_0000.h5"), "w") as handle:
+            globals_group = handle.create_group("globals")
+            group = globals_group.create_group("raman")
+            group.attrs["dummy_iterator"] = np.arange(3)
+            group.attrs["freq"] = np.linspace(0.0, 1.0, 50)
+            group.attrs["duration"] = np.linspace(0.0, 1.0, 50)
+            expansion = group.create_group("expansion")
+            expansion.attrs["dummy_iterator"] = "outer"
+            expansion.attrs["freq"] = "zip_1"
+            expansion.attrs["duration"] = "zip_1"
+            globals_group.attrs["dummy_iterator"] = 0
+        out = bridge.cmd_data(cfg, {"run_folder": run_dir})
+        expansion = out["expansion"]
+        assert expansion["n_shots"] == 150, expansion
+        kinds = [(axis["kind"], axis["name"], axis["n"]) for axis in expansion["axes"]]
+        assert kinds[0] == ("outer", "dummy_iterator", 3), kinds
+        assert kinds[1][0] == "zip" and kinds[1][2] == 50, kinds
+        zip_axis = expansion["axes"][1]
+        assert sorted(zip_axis["members"]) == ["duration", "freq"], zip_axis
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

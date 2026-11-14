@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.4
+
+Second round from the field. 0.3.3 stopped `labs_doctor` from importing labscript, but its
+runmanager probe still ran in the same process, after the numpy/h5py checks, so it still
+hit labscript_utils' process-wide import hook and reported a false `[fail]`.
+
+- `labs_doctor` now runs the runmanager probe in a child interpreter (a new internal
+  `probe` command), the same kind of process every tool call gets. Importing
+  labscript_utils installs an import hook that makes any later import in the process
+  unsafe, and doctor has already imported h5py by then; a child process cannot be
+  poisoned by the checks that ran before it.
+- `labs_data` reports `executed: M` next to `h5: N`: shot files are written before each
+  shot is compiled, so the file count is not progress, and a run folder holding only
+  compile artefacts now says `executed: 0`. It also prints the real expansion structure
+  recorded in the shot file, `axes: name(outer, n) x [a, b](zip, n) = n_shots` (runmanager
+  writes a per-group `expansion` group; `lyse.Run.get_globals_expansion` reads the same
+  attrs). Two 50-point globals can be one zip axis, which the panel-product heuristic in
+  `labs_status` cannot see; that line now points at `labs_data`.
+- `labs_protocol show` prints the write-back plan before the run: the postprocess label
+  and its configured entry, plus the `finish` panel/history targets and the restore flag.
+- The runtime skill explains the three new outputs (`finish skipped`, "panel field, not a
+  global", expansion axes) and the optional `scan_globals` postprocess argument.
+- Tests: 41 python + 51 node.
+
 ## 0.3.3
 
 Makes the tools report what actually happened instead of hiding it, and removes a backend
